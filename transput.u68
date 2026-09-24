@@ -1,0 +1,184 @@
+{ transput.u68 - Unicode-Transput-Modul fuer Gorgona.
+
+  Der Stock-ga68 (Posix-Prelude) ist fuer diesen Server NICHT byte-exakt:
+  fgetc dekodiert UTF-8 beim Lesen (eine Mehrbyte-Sequenz wird zu einem
+  Codepunkt), fputs kodiert beim Schreiben und schreibt zudem nur die
+  Zeichenanzahl aus dem UTF-8-Puffer. Dieses Modul stellt darum eine
+  byte-exakte Ein-/Ausgabe bereit, gestuetzt auf nur zwei minimale
+  C-Primitive (transput_wrapper.c): roh lesen und roh schreiben, jeweils
+  1 Byte = 1 Zeichenzelle.
+
+  Darueber liegen zwei Dienste:
+   - read_file / write_all: byte-exaktes Lesen ganzer Dateien und
+     Schreiben von Zeichenketten (fuer Socket-Antworten und das
+     web/-Unterprojekt).
+   - Konfigurationsverwaltung (gorgona.conf): Einlesen und Auswerten von
+     "KEY = VALUE"-Zeilen mit "#"-Kommentaren - komplett in Algol 68,
+     das C beschraenkt sich auf die zwei Rohteil-Primitive oben.
+
+  Das Modul ist reiner Quelltext (Deklarationen); der Build schiebt es
+  hinter das oeffnende BEGIN des Hauptprogramms. Alle Prozeduren heissen
+  ASCII, damit sie auch unter ga68-UPPER-Stropping eindeutig sind. }
+
+{ Datei roh und komplett lesen (1 Byte je Zeichenzelle);
+  bei Fehler leerer String. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 read_file = 𝐧𝐞𝐬𝐭 𝐜 "algol68_read_file";
+
+{ Zeichenkette byte-genau auf einen Descriptor schreiben
+  (Niedrigwert-Byte je Zelle, volle Laenge). }
+  𝐩𝐫𝐨𝐜(𝐢𝐧𝐭, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_all = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_all";
+
+{ --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare) --- }
+  𝐦𝐨𝐝𝐞 𝐤𝐨𝐧𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐬𝐭𝐫𝐢𝐧𝐠 val);
+  [1:16] 𝐤𝐨𝐧𝐟 cfg;
+  𝐢𝐧𝐭 cfg_n ← 0;
+
+{ Fuehrende und abschliessende Blank-, Tabulator- und Wagenruecklauf-
+    Zeichen abschneiden. (Achtung: AND/OR sind NICHT kurzsicher - der
+    Index wird deshalb nie zusammen mit der Grenzpruefung ausgewertet.) }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 tstr =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 a ← 𝐥𝐰𝐛 𝑠, z ← 𝐮𝐩𝐛 𝑠;
+        𝐛𝐨𝐨𝐥 run ← 𝐭𝐫𝐮𝐞;
+        𝐰𝐡𝐢𝐥𝐞 run 𝐝𝐨
+          𝐢𝐟 a > z 𝐭𝐡𝐞𝐧
+            run ← 𝐟𝐚𝐥𝐬𝐞
+          𝐞𝐥𝐢𝐟 𝑠[a] = " " 𝐨𝐫 𝑠[a] = 𝐫𝐞𝐩𝐫 9 𝐨𝐫 𝑠[a] = 𝐫𝐞𝐩𝐫 13 𝐭𝐡𝐞𝐧
+            a ← a + 1
+          𝐞𝐥𝐬𝐞
+            run ← 𝐟𝐚𝐥𝐬𝐞
+          𝐟𝐢
+        𝐨𝐝;
+        run ← 𝐭𝐫𝐮𝐞;
+        𝐰𝐡𝐢𝐥𝐞 run 𝐝𝐨
+          𝐢𝐟 z < a 𝐭𝐡𝐞𝐧
+            run ← 𝐟𝐚𝐥𝐬𝐞
+          𝐞𝐥𝐢𝐟 𝑠[z] = " " 𝐨𝐫 𝑠[z] = 𝐫𝐞𝐩𝐫 9 𝐨𝐫 𝑠[z] = 𝐫𝐞𝐩𝐫 13 𝐭𝐡𝐞𝐧
+            z ← z - 1
+          𝐞𝐥𝐬𝐞
+            run ← 𝐟𝐚𝐥𝐬𝐞
+          𝐟𝐢
+        𝐨𝐝;
+        𝐢𝐟 z ≥ a 𝐭𝐡𝐞𝐧 𝑠[a:z] 𝐞𝐥𝐬𝐞 "" 𝐟𝐢
+      𝐞𝐧𝐝;
+
+{ Position des ersten "=" in s; 0 wenn keins enthalten ist. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 findeq =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑟 ← 0;
+        𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑠 𝐰𝐡𝐢𝐥𝐞 𝑟 = 0 𝐝𝐨
+          𝐢𝐟 𝑠[k] = "=" 𝐭𝐡𝐞𝐧 𝑟 ← k 𝐟𝐢
+        𝐨𝐝;
+        𝑟
+      𝐞𝐧𝐝;
+
+{ Ganzzahl aus einer Dezimalzeichenkette; bei nicht-numerischem Inhalt
+  der uebergebene Default. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 c2i =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠, 𝐢𝐧𝐭 default) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 a ← 𝐥𝐰𝐛 𝑠, sign ← 1, 𝑣 ← 0;
+        𝐛𝐨𝐨𝐥 ok ← 𝐟𝐚𝐥𝐬𝐞;
+        { Fuehrende Blanks ueberspringen (AND/OR nicht kurzsicher) }
+        𝐛𝐨𝐨𝐥 sp ← 𝐭𝐫𝐮𝐞;
+        𝐰𝐡𝐢𝐥𝐞 sp 𝐝𝐨
+          𝐢𝐟 a > 𝐮𝐩𝐛 𝑠 𝐭𝐡𝐞𝐧
+            sp ← 𝐟𝐚𝐥𝐬𝐞
+          𝐞𝐥𝐢𝐟 𝑠[a] = " " 𝐭𝐡𝐞𝐧
+            a ← a + 1
+          𝐞𝐥𝐬𝐞
+            sp ← 𝐟𝐚𝐥𝐬𝐞
+          𝐟𝐢
+        𝐨𝐝;
+        𝐢𝐟 a ≤ 𝐮𝐩𝐛 𝑠 𝐭𝐡𝐞𝐧
+          𝐢𝐟 𝑠[a] = "-" 𝐭𝐡𝐞𝐧
+            sign ← -1;
+            a ← a + 1
+          𝐞𝐥𝐢𝐟 𝑠[a] = "+" 𝐭𝐡𝐞𝐧
+            a ← a + 1
+          𝐟𝐢
+        𝐟𝐢;
+        𝐛𝐨𝐨𝐥 dig ← 𝐭𝐫𝐮𝐞;
+        𝐰𝐡𝐢𝐥𝐞 dig 𝐝𝐨
+          𝐢𝐟 a > 𝐮𝐩𝐛 𝑠 𝐭𝐡𝐞𝐧
+            dig ← 𝐟𝐚𝐥𝐬𝐞
+          𝐞𝐥𝐢𝐟 𝑠[a] ≥ "0" 𝐚𝐧𝐝 𝑠[a] ≤ "9" 𝐭𝐡𝐞𝐧
+            𝑣 ← 𝑣 * 10 + (𝐚𝐛𝐬 𝑠[a] - 𝐚𝐛𝐬 "0");
+            a ← a + 1;
+            ok ← 𝐭𝐫𝐮𝐞
+          𝐞𝐥𝐬𝐞
+            dig ← 𝐟𝐚𝐥𝐬𝐞
+          𝐟𝐢
+        𝐨𝐝;
+        𝐢𝐟 ok 𝐭𝐡𝐞𝐧 sign * 𝑣 𝐞𝐥𝐬𝐞 default 𝐟𝐢
+      𝐞𝐧𝐝;
+
+{ gorgona.conf einlesen und auswerten.
+  Rueckgabe: 0 = ok, -1 = Datei fehlt/unlesbar (leerer String). }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 config_load =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 path) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 text ← read_file(path);
+        𝐢𝐟 text = "" 𝐭𝐡𝐞𝐧
+          -1
+        𝐞𝐥𝐬𝐞
+          cfg_n ← 0;
+          𝐢𝐧𝐭 i ← 1;
+          𝐰𝐡𝐢𝐥𝐞 i ≤ 𝐮𝐩𝐛 text 𝐝𝐨
+            { Zeilenende suchen, Zeile ohne '\n' schneiden }
+            𝐢𝐧𝐭 j ← i;
+            𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+            𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+              𝐢𝐟 j > 𝐮𝐩𝐛 text 𝐭𝐡𝐞𝐧
+                f ← 𝐭𝐫𝐮𝐞
+              𝐞𝐥𝐢𝐟 text[j] = "'n" 𝐭𝐡𝐞𝐧
+                f ← 𝐭𝐫𝐮𝐞
+              𝐞𝐥𝐬𝐞
+                j ← j + 1
+              𝐟𝐢
+            𝐨𝐝;
+            𝐬𝐭𝐫𝐢𝐧𝐠 zeile ← tstr(text[i:j-1]);
+            i ← j + 1;
+            { Kommentar-/Leerzeilen ueberspringen; AND ist nicht
+              kurzsicher, darum zuerst die Laenge pruefen }
+            𝐛𝐨𝐨𝐥 skip ← zeile = "";
+            𝐢𝐟 𝐧𝐨𝐭 skip 𝐭𝐡𝐞𝐧
+              skip ← zeile[1] = "#"
+            𝐟𝐢;
+            𝐢𝐟 𝐧𝐨𝐭 skip 𝐭𝐡𝐞𝐧
+              𝐢𝐧𝐭 e ← findeq(zeile);
+              𝐢𝐟 e > 0 𝐭𝐡𝐞𝐧
+                𝐬𝐭𝐫𝐢𝐧𝐠 key ← tstr(zeile[1:e-1]);
+                𝐬𝐭𝐫𝐢𝐧𝐠 val ← tstr(zeile[e+1:𝐮𝐩𝐛 zeile]);
+                𝐢𝐟 key /= "" 𝐚𝐧𝐝 cfg_n < 16 𝐭𝐡𝐞𝐧
+                  cfg_n ← cfg_n + 1;
+                  key 𝐨𝐟 cfg[cfg_n] ← key;
+                  val 𝐨𝐟 cfg[cfg_n] ← val
+                𝐟𝐢
+              𝐟𝐢
+            𝐟𝐢
+          𝐨𝐝;
+          0
+        𝐟𝐢
+      𝐞𝐧𝐝;
+
+{ Wert des Schluessels; leerer String wenn nicht vorhanden. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 config_string =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 key) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 r ← "";
+        𝐟𝐨𝐫 i 𝐭𝐨 cfg_n 𝐝𝐨
+          𝐢𝐟 key 𝐨𝐟 cfg[i] = key 𝐭𝐡𝐞𝐧 r ← val 𝐨𝐟 cfg[i] 𝐟𝐢
+        𝐨𝐝;
+        r
+      𝐞𝐧𝐝;
+
+{ Ganzzahlwert des Schluessels; Default wenn fehlend oder ungueltig. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 config_int =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐢𝐧𝐭 default) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 v ← config_string(key);
+        𝐢𝐟 v /= "" 𝐭𝐡𝐞𝐧 c2i(v, default) 𝐞𝐥𝐬𝐞 default 𝐟𝐢
+      𝐞𝐧𝐝;

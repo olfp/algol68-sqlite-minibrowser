@@ -1,4 +1,4 @@
-/* srv68: SQLite-Anbindung fuer dieselbe Datenbank wie das Projekt sql68
+/* Gorgona: SQLite-Anbindung fuer dieselbe Datenbank wie das Projekt sql68
  * (Chinook.sqlite). Im Gegensatz zu sql68 wird das Abfrageergebnis hier
  * direkt in C zu einem JSON-Array formatiert statt ueber einen Algol-68-
  * Callback: Alle Worker-Threads teilen sich eine Verbindung, der Zugriff
@@ -14,8 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <unistd.h>
-#include <errno.h>
 
 static pthread_mutex_t srv_sqlite_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -172,38 +170,4 @@ int algol68_sqlite_exec_json(sqlite3 *db,
 int algol68_sqlite_close(sqlite3 *db)
 {
   return sqlite3_close(db);
-}
-
-/* Schreibt einen ga68-STRING byte-genau auf `fd`. Die POSIX-Prelude-fputs
- * von ga68 schreibt faelschlich nur die ZEICHENANZAHL aus einem UTF-8-
- * Puffer (schneidet dadurch den Schwanz ab und kodiert Zeichen > 0x7F
- * doppelt). Hier verlassen wir uns stattdessen auf die Niedrigwert-Bytes:
- * algol68_sqlite_exec_json hat jedes JSON-Byte 1:1 in eine u32-Zelle
- * gelegt, damit gehen die Antwort-Bytes hier bit-genau wieder raus
- * (Laenge = Zeichenzahl = passt zum berechneten Content-Length). */
-int algol68_write_all(int fd, const uint32_t *s, size_t len, size_t stride)
-{
-  size_t cap = len + 1;
-  if (cap < 8192) cap = 8192;
-  char *buf = malloc(cap);
-  if (!buf) return -1;
-
-  for (size_t i = 0; i < len; i++) {
-    const uint32_t *p = (const uint32_t *)((const char *)s + i * stride);
-    buf[i] = (char)(*p & 0xFF);
-  }
-
-  size_t off = 0;
-  while (off < len) {
-    ssize_t n = write(fd, buf + off, len - off);
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      free(buf);
-      return -1;
-    }
-    off += (size_t)n;
-  }
-
-  free(buf);
-  return 0;
 }

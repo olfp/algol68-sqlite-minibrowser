@@ -1,0 +1,391 @@
+BEGIN
+  { Gorgona - ein minimaler HTTP-Server in Algol 68.
+    Liefert die Tabellen einer SQLite-Datenbank (Pfad aus gorgona.conf,
+    z.B. die Chinook-Beispieldatenbank des Projekts sql68) ueber eine
+    kleine REST-API als JSON. Die Routen werden zur Laufzeit aus dem
+    Datenbank-Schema aufgebaut; jede Route stellt eine Tabelle aus. }
+
+  { Socket-Anbindung: socket/bind/listen/accept gibt es nicht in der
+    POSIX-Prelude, also ueber nest C aus einer kleinen C-Quelle beziehen.
+    Alles Weitere (Lesen/Schreiben auf dem File-Descriptor) liefert die
+    POSIX-Prelude (fgetc/fputs/fclose).
+    Fuer echte Multithreading-Worker kommt eine pthread-Unterstuetzung
+    aus thread_wrapper.c zum Einsatz. }
+
+  PROC(INT) INT socket_listen = NEST C "algol68_socket_listen";
+  PROC(INT) INT socket_accept = NEST C "algol68_socket_accept";
+  PROC(INT, INT, PROC(INT) VOID) VOID server_serve =
+    NEST C "algol68_server_serve";
+
+  { SQLite-Anbindung: gleiche NEST-C-Technik wie im Projekt sql68.
+    Das Ergebnis der Abfrage formt algol68_sqlite_exec_json direkt zu
+    einem JSON-Array (thread-sicher, daher kein Algol-Callback). }
+  MODE SQLITE = LONG BITS;
+  PROC(STRING, REF SQLITE) INT sqlite_open = NEST C "algol68_sqlite_open";
+  PROC(SQLITE, STRING) STRING sqlite_exec_json =
+    NEST C "algol68_sqlite_exec_json";
+  PROC(SQLITE) INT sqlite_close = NEST C "algol68_sqlite_close";
+
+  { Das Unicode-Transput-Modul (transput.u68) steuert die byte-exakte
+    Ein-/Ausgabe bei (read_file/write_all ueber minimale C-Primitive) und
+    die Konfiguration (config_load/config_string/config_int). Der Build
+    schiebt die Modul-Deklarationen direkt hinter dieses BEGIN. }
+
+{ String, der nur Ziffern enthaelt, in int verwandeln }
+  PROC(STRING) INT s2i =
+    (STRING s) INT:
+      BEGIN
+        INT v := 0;
+        FOR i FROM LWB s TO UPB s DO
+          v := v * 10 + (ABS s[i] - ABS "0")
+        OD;
+        v
+      END;
+
+  { Eine Zeile (bis Zeilenende) von einem File-Descriptor lesen.
+    fgets aus der POSIX-Prelude ist fehlerhaft (Segfault), daher
+    zeichenweise mit fgetc. Die Zeilenende-Zeichen werden verworfen. }
+  PROC(INT, INT) STRING read_line =
+    (INT fd, INT max_len) STRING:
+      BEGIN
+        [1:max_len] CHAR buf;
+        INT n := 0;
+        BOOL done := FALSE;
+        WHILE NOT done DO
+          CHAR c := fgetc(fd);
+          IF c = eofchar THEN
+            done := TRUE
+          ELIF c = "'n" THEN
+            done := TRUE
+          ELIF n < max_len THEN
+            n +:= 1;
+            buf[n] := c
+          FI
+        OD;
+        buf[1:n]
+      END;
+
+  { Position des ersten Auftretens von c in s; 0 wenn nicht enthalten }
+  PROC(STRING, CHAR) INT findc =
+    (STRING s, CHAR c) INT:
+      BEGIN
+        INT r := 0;
+        FOR k FROM LWB s TO UPB s WHILE r = 0 DO
+          IF s[k] = c THEN r := k FI
+        OD;
+        r
+      END;
+
+  { Aus der Request-Zeile den URL-Pfad herauslesen, z.B.
+    "GET /api/users?x=1 HTTP/1.1" -> "/api/users". }
+  PROC(STRING) STRING extract_path =
+    (STRING request) STRING:
+      BEGIN
+        INT sp1 := findc(request, " ");
+        STRING head := request[sp1+1:UPB request];
+        INT sp2 := findc(head, " ");
+        STRING path := head[LWB head:sp2-1];
+        INT q := findc(path, "?");
+        IF q > 0 THEN
+          path := path[LWB path:q-1]
+        FI;
+        path
+      END;
+
+  { Helfer, um die Routentabelle zur Laufzeit aus dem Datenbank-Schema
+    aufzubauen: das von sqlite_exec_json erzeugte JSON mit den Tabellen-
+    namen wird hier bewusst einfach textuell ausgewertet. }
+
+  { Substring ndl ab der Position vfrom in hay suchen; 0 wenn nicht
+    enthalten. }
+  PROC(STRING, STRING, INT) INT find_sub =
+    (STRING hay, STRING ndl, INT vfrom) INT:
+      BEGIN
+        INT r := 0;
+        INT n := UPB ndl;
+        IF vfrom >= 1 AND n <= UPB hay - vfrom + 1 THEN
+          INT i := vfrom;
+          WHILE i <= UPB hay - n + 1 AND r = 0 DO
+            IF hay[i : i+n-1] = ndl THEN r := i FI;
+            i := i + 1
+          OD
+        FI;
+        r
+      END;
+
+  { Anzahl der Vorkommen von ndl in s }
+  PROC(STRING, STRING) INT find_count =
+    (STRING s, STRING ndl) INT:
+      BEGIN
+        INT c := 0, p := 1;
+        WHILE p > 0 DO
+          p := find_sub(s, ndl, p);
+          IF p > 0 THEN
+            c := c + 1;
+            p := p + UPB ndl
+          FI
+        OD;
+        c
+      END;
+
+  { Den idx-ten Tabellennamen aus dem sqlite_master-JSON holen, etwa
+    [ {"name" : "Album"}, ... ] (JSON-Format von sqlite_exec_json). }
+  PROC(STRING, INT) STRING name_at =
+    (STRING json, INT idx) STRING:
+      BEGIN
+        STRING tag := REPR 34 + "name" + REPR 34;
+        INT p := find_sub(json, tag, 1);
+        INT k := 1;
+        WHILE k < idx AND p > 0 DO
+          p := find_sub(json, tag, p + UPB tag);
+          k := k + 1
+        OD;
+        IF p = 0 THEN
+          ""
+        ELSE
+          { Auf das ':' des Schluessels springen (AND/OR nicht kurzsicher,
+            daher die Grenzen nie zusammen mit dem Index auswerten) }
+          p := p + UPB tag;
+          BOOL f := FALSE;
+          WHILE NOT f DO
+            IF p > UPB json THEN
+              f := TRUE
+            ELIF json[p] /= ":" THEN
+              p := p + 1
+            ELSE
+              f := TRUE
+            FI
+          OD;
+          p := p + 1;
+          f := FALSE;
+          WHILE NOT f DO
+            IF p > UPB json THEN
+              f := TRUE
+            ELIF json[p] = " " OR json[p] = REPR 34 THEN
+              p := p + 1
+            ELSE
+              f := TRUE
+            FI
+          OD;
+          INT a := p;
+          f := FALSE;
+          WHILE NOT f DO
+            IF p > UPB json THEN
+              f := TRUE
+            ELIF json[p] /= REPR 34 THEN
+              p := p + 1
+            ELSE
+              f := TRUE
+            FI
+          OD;
+          json[a : p-1]
+        FI
+      END;
+
+  { URL-tauglichen Pfad aus einem Tabellennamen machen: Grossbuchstaben
+    werden zu Kleinbuchstaben, alles ausser [a-z0-9_] wird weggelassen
+    ("Invoice Line" wird zu "invoiceline"), davor steht "/api/". }
+  PROC(STRING) STRING path_of =
+    (STRING name) STRING:
+      BEGIN
+        STRING out := "";
+        FOR k FROM LWB name TO UPB name DO
+          CHAR c := name[k];
+          IF (c >= "a" AND c <= "z") OR (c >= "0" AND c <= "9") OR c = "_" THEN
+            out := out + c
+          ELIF c >= "A" AND c <= "Z" THEN
+            out := out + REPR(ABS c + 32)
+          FI
+        OD;
+        "/api/" + out
+      END;
+
+  { Tabellennamen als SQL-Identifier quoten. SQLite nimmt den Namen in
+    doppelte Quote-Zeichen (repe 34); enthaltene Quote-Zeichen werden
+    verdoppelt. }
+  PROC(STRING) STRING ident =
+    (STRING name) STRING:
+      BEGIN
+        STRING out := REPR 34;
+        FOR k FROM LWB name TO UPB name DO
+          IF name[k] = REPR 34 THEN
+            out := out + REPR 34 + REPR 34
+          ELSE
+            out := out + name[k]
+          FI
+        OD;
+        out + REPR 34
+      END;
+
+  { Basisinamen einer Datei (ohne Verzeichnisanteil): "data/test.db" wird
+    zu "test.db", ein Pfad ohne '/' bleibt unveraendert. Dient der
+    Anzeige der aktiven Datenbank im Browser-Frontend. }
+  PROC(STRING) STRING basename =
+    (STRING path) STRING:
+      BEGIN
+        INT cut := 0;
+        FOR k FROM LWB path TO UPB path DO
+          IF path[k] = "/" THEN cut := k FI
+        OD;
+        IF cut = 0 THEN path ELSE path[cut+1 : UPB path] FI
+      END;
+
+  { Die zu durchsuchende Datenbank wird in gorgona.conf gesetzt (db_path);
+    siehe den Konfig-Block im Start-Teil weiter unten. }
+
+  { Routentabelle: URL-Pfad und passende Tabelle. Der Inhalt wird zur
+    Laufzeit aus dem Datenbank-Schema aufgebaut (sqlite_master), damit
+    Gorgona mit beliebigen SQLite-Datenbanken funktioniert - siehe den
+    Abschnitt "Routen aus dem Schema" im Start-Teil. }
+  MODE ROUTE = STRUCT (STRING path, STRING table);
+
+  { Gorgona DB Browser: die JSON-Routen weiter unten werden in einer kleinen
+    HTML/JS-Seite visualisiert. Der Browser lebt als eigenstaendiges
+    Unterprojekt in web/ (index.html, app.js, style.css) und wird zur
+    Laufzeit von Disk geliefert; im Servercode ist kein HTML/JS eingebettet. }
+
+  { HTTP-Antwort mit Statuszeile, Content-Type und passt Content-Length
+    an die Laenge des Bodys an. }
+  PROC(STRING, STRING, STRING) STRING http_response =
+    (STRING status, STRING ctype, STRING body) STRING:
+      "HTTP/1.1 " + status + "'r'n"
+      + "Content-Type: " + ctype + "'r'n"
+      + "Content-Length: " + whole(UPB body, 0) + "'r'n"
+      + "Connection: close'r'n"
+      + "'r'n"
+      + body;
+
+  { Konfiguration aus gorgona.conf lesen (db_path ist Pflicht,
+    port/workers optional mit Defaults). }
+  INT config_rc := config_load("gorgona.conf");
+  IF config_rc /= 0 THEN
+    puts("Fehler: gorgona.conf nicht gefunden oder unlesbar (bitte im Arbeitsverzeichnis ablegen).'n");
+    posix_exit(1)
+  FI;
+  STRING db_path := config_string("db_path");
+  IF db_path = "" THEN
+    puts("Fehler: db_path fehlt in gorgona.conf.'n");
+    posix_exit(1)
+  FI;
+  STRING db_base := basename(db_path);
+
+  INT port := config_int("port", 8080);
+  IF argc >= 2 THEN
+    port := s2i(argv(2))
+  FI;
+
+  { SQLite-Datenbank oeffnen; bei Fehler beenden. }
+  SQLITE db;
+  INT rc := sqlite_open(db_path, db);
+  IF rc /= 0 THEN
+    puts("Fehler: Konnte die Datenbank nicht oeffnen: " + db_path + "'n");
+    posix_exit(1)
+  FI;
+
+  { Routen zur Laufzeit aus dem Datenbank-Schema aufbauen: SQLite legt
+    das Schema in sqlite_master ab. Damit funktioniert Gorgona mit jeder
+    SQLite-Datenbank - nicht nur mit Chinook. Aus jedem Tabellennamen
+    wird die Route "/api/<name>" abgeleitet. }
+  STRING q_tables := "SELECT name FROM sqlite_master WHERE type = " + REPR 39
+                    + "table" + REPR 39
+                    + " AND name NOT LIKE " + REPR 39 + "sqlite_%" + REPR 39
+                    + " ORDER BY name;";
+  STRING tjson := sqlite_exec_json(db, q_tables);
+  INT nt := find_count(tjson, REPR 34 + "name" + REPR 34);
+  IF nt < 1 THEN nt := 1 FI;
+  [1:nt] ROUTE routes;
+  FOR i TO UPB routes DO
+    STRING tab := name_at(tjson, i);
+    (path OF routes[i]) := path_of(tab);
+    (table OF routes[i]) := tab
+  OD;
+  puts("Routen aus dem Schema: " + whole(UPB routes, 0) + " Tabellen.'n");
+
+  INT listen_fd := socket_listen(port);
+  IF listen_fd < 0 THEN
+    puts("Fehler: Konnte Port " + whole(port, 0) + " nicht belegen.'n");
+    posix_exit(1)
+  FI;
+
+  puts("Lausche auf Port " + whole(port, 0) + " ...'n");
+
+  { Ein Worker: liest die Request-Zeile vom Client-Descriptor, fuehrt fuer
+    den Pfad die passende SELECT-Abfrage gegen die Datenbank aus und
+    antwortet mit dem JSON-Ergebnis. Unbekannte Pfade bekommen 404. }
+  PROC(INT) VOID handle_connection =
+    (INT client_fd) VOID:
+      BEGIN
+        STRING request := read_line(client_fd, 4096);
+        STRING path := extract_path(request);
+        STRING body := "";
+        STRING status := "404 Not Found";
+        IF path = "/" THEN
+          { Wurzel: Gorgona DB Browser aus dem web/-Unterprojekt }
+          body := read_file("web/index.html");
+          status := "200 OK"
+        ELIF path = "/app.js" THEN
+          body := read_file("web/app.js");
+          status := "200 OK"
+        ELIF path = "/style.css" THEN
+          body := read_file("web/style.css");
+          status := "200 OK"
+        ELIF path = "/api/tables" THEN
+          { JSON-Liste aller Tabellen-Routen, dynamisch aus der
+            Routentabelle gebaut }
+          body := "{ ""tables"" : [";
+          FOR i FROM LWB routes TO UPB routes DO
+            IF (path OF routes[i])[1:5] = "/api/" THEN
+              IF i > LWB routes THEN
+                body := body + ","
+              FI;
+              body := body + """" + (path OF routes[i]) + """"
+            FI
+          OD;
+          body := body + "] }";
+          status := "200 OK"
+        ELIF path = "/api/health" THEN
+          { Basisiname der aktiven Datenbank, damit das Frontend eine
+            echte Angabe anzeigen kann }
+          body := "{ ""status"" : ""ok"", ""database"" : """ + db_base + """ }";
+          status := "200 OK"
+        ELSE
+          FOR i FROM LWB routes TO UPB routes DO
+            IF path OF routes[i] = path THEN
+              { Select der Tabelle; Namen werden als Identifier gequotet;
+                maximal 50 Zeilen pro Antwort }
+              STRING q := "SELECT * FROM " + ident(table OF routes[i]) + " LIMIT 50;";
+              body := "{ ""table"" : """ + (table OF routes[i]) + """, ""rows"" : "
+                       + sqlite_exec_json(db, q) + " }";
+              status := "200 OK"
+            FI
+          OD
+        FI;
+        { Statische Datei (web/-Unterprojekt) konnte nicht gelesen werden: 404 }
+        IF status = "200 OK" AND
+           (path = "/" OR path = "/app.js" OR path = "/style.css") AND
+           body = "" THEN
+          status := "404 Not Found"
+        FI;
+        IF status = "404 Not Found" THEN
+          body := "{ ""error"" : ""not found"", ""path"" : """ + path + """ }"
+        FI;
+        STRING response :=
+          http_response(status,
+                        IF path = "/" THEN "text/html; charset=utf-8"
+                        ELIF path = "/app.js" THEN "text/javascript; charset=utf-8"
+                        ELIF path = "/style.css" THEN "text/css; charset=utf-8"
+                        ELSE "application/json" FI,
+                        body);
+        write_all(client_fd, response);
+        fclose(client_fd)
+      END;
+
+  INT nr_workers := config_int("workers", 4);
+  IF argc >= 3 THEN
+    nr_workers := s2i(argv(3))
+  FI;
+
+  { Feste Anzahl von Worker-Threads starten; accept() wird im Thread
+    ausgefuehrt und vom Kern serialisiert }
+  server_serve(listen_fd, nr_workers, handle_connection)
+END

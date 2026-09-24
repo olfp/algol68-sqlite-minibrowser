@@ -1,0 +1,184 @@
+{ transput.u68 - Unicode-Transput-Modul fuer Gorgona.
+
+  Der Stock-ga68 (Posix-Prelude) ist fuer diesen Server NICHT byte-exakt:
+  fgetc dekodiert UTF-8 beim Lesen (eine Mehrbyte-Sequenz wird zu einem
+  Codepunkt), fputs kodiert beim Schreiben und schreibt zudem nur die
+  Zeichenanzahl aus dem UTF-8-Puffer. Dieses Modul stellt darum eine
+  byte-exakte Ein-/Ausgabe bereit, gestuetzt auf nur zwei minimale
+  C-Primitive (transput_wrapper.c): roh lesen und roh schreiben, jeweils
+  1 Byte = 1 Zeichenzelle.
+
+  Darueber liegen zwei Dienste:
+   - read_file / write_all: byte-exaktes Lesen ganzer Dateien und
+     Schreiben von Zeichenketten (fuer Socket-Antworten und das
+     web/-Unterprojekt).
+   - Konfigurationsverwaltung (gorgona.conf): Einlesen und Auswerten von
+     "KEY = VALUE"-Zeilen mit "#"-Kommentaren - komplett in Algol 68,
+     das C beschraenkt sich auf die zwei Rohteil-Primitive oben.
+
+  Das Modul ist reiner Quelltext (Deklarationen); der Build schiebt es
+  hinter das oeffnende BEGIN des Hauptprogramms. Alle Prozeduren heissen
+  ASCII, damit sie auch unter ga68-UPPER-Stropping eindeutig sind. }
+
+{ Datei roh und komplett lesen (1 Byte je Zeichenzelle);
+  bei Fehler leerer String. }
+  PROC(STRING) STRING read_file = NEST C "algol68_read_file";
+
+{ Zeichenkette byte-genau auf einen Descriptor schreiben
+  (Niedrigwert-Byte je Zelle, volle Laenge). }
+  PROC(INT, STRING) INT write_all = NEST C "algol68_write_all";
+
+{ --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare) --- }
+  MODE KONF = STRUCT (STRING key, STRING val);
+  [1:16] KONF cfg;
+  INT cfg_n := 0;
+
+{ Fuehrende und abschliessende Blank-, Tabulator- und Wagenruecklauf-
+    Zeichen abschneiden. (Achtung: AND/OR sind NICHT kurzsicher - der
+    Index wird deshalb nie zusammen mit der Grenzpruefung ausgewertet.) }
+  PROC(STRING) STRING tstr =
+    (STRING s) STRING:
+      BEGIN
+        INT a := LWB s, z := UPB s;
+        BOOL run := TRUE;
+        WHILE run DO
+          IF a > z THEN
+            run := FALSE
+          ELIF s[a] = " " OR s[a] = REPR 9 OR s[a] = REPR 13 THEN
+            a := a + 1
+          ELSE
+            run := FALSE
+          FI
+        OD;
+        run := TRUE;
+        WHILE run DO
+          IF z < a THEN
+            run := FALSE
+          ELIF s[z] = " " OR s[z] = REPR 9 OR s[z] = REPR 13 THEN
+            z := z - 1
+          ELSE
+            run := FALSE
+          FI
+        OD;
+        IF z >= a THEN s[a:z] ELSE "" FI
+      END;
+
+{ Position des ersten "=" in s; 0 wenn keins enthalten ist. }
+  PROC(STRING) INT findeq =
+    (STRING s) INT:
+      BEGIN
+        INT r := 0;
+        FOR k FROM LWB s TO UPB s WHILE r = 0 DO
+          IF s[k] = "=" THEN r := k FI
+        OD;
+        r
+      END;
+
+{ Ganzzahl aus einer Dezimalzeichenkette; bei nicht-numerischem Inhalt
+  der uebergebene Default. }
+  PROC(STRING, INT) INT c2i =
+    (STRING s, INT default) INT:
+      BEGIN
+        INT a := LWB s, sign := 1, v := 0;
+        BOOL ok := FALSE;
+        { Fuehrende Blanks ueberspringen (AND/OR nicht kurzsicher) }
+        BOOL sp := TRUE;
+        WHILE sp DO
+          IF a > UPB s THEN
+            sp := FALSE
+          ELIF s[a] = " " THEN
+            a := a + 1
+          ELSE
+            sp := FALSE
+          FI
+        OD;
+        IF a <= UPB s THEN
+          IF s[a] = "-" THEN
+            sign := -1;
+            a := a + 1
+          ELIF s[a] = "+" THEN
+            a := a + 1
+          FI
+        FI;
+        BOOL dig := TRUE;
+        WHILE dig DO
+          IF a > UPB s THEN
+            dig := FALSE
+          ELIF s[a] >= "0" AND s[a] <= "9" THEN
+            v := v * 10 + (ABS s[a] - ABS "0");
+            a := a + 1;
+            ok := TRUE
+          ELSE
+            dig := FALSE
+          FI
+        OD;
+        IF ok THEN sign * v ELSE default FI
+      END;
+
+{ gorgona.conf einlesen und auswerten.
+  Rueckgabe: 0 = ok, -1 = Datei fehlt/unlesbar (leerer String). }
+  PROC(STRING) INT config_load =
+    (STRING path) INT:
+      BEGIN
+        STRING text := read_file(path);
+        IF text = "" THEN
+          -1
+        ELSE
+          cfg_n := 0;
+          INT i := 1;
+          WHILE i <= UPB text DO
+            { Zeilenende suchen, Zeile ohne '\n' schneiden }
+            INT j := i;
+            BOOL f := FALSE;
+            WHILE NOT f DO
+              IF j > UPB text THEN
+                f := TRUE
+              ELIF text[j] = "'n" THEN
+                f := TRUE
+              ELSE
+                j := j + 1
+              FI
+            OD;
+            STRING zeile := tstr(text[i:j-1]);
+            i := j + 1;
+            { Kommentar-/Leerzeilen ueberspringen; AND ist nicht
+              kurzsicher, darum zuerst die Laenge pruefen }
+            BOOL skip := zeile = "";
+            IF NOT skip THEN
+              skip := zeile[1] = "#"
+            FI;
+            IF NOT skip THEN
+              INT e := findeq(zeile);
+              IF e > 0 THEN
+                STRING key := tstr(zeile[1:e-1]);
+                STRING val := tstr(zeile[e+1:UPB zeile]);
+                IF key /= "" AND cfg_n < 16 THEN
+                  cfg_n := cfg_n + 1;
+                  key OF cfg[cfg_n] := key;
+                  val OF cfg[cfg_n] := val
+                FI
+              FI
+            FI
+          OD;
+          0
+        FI
+      END;
+
+{ Wert des Schluessels; leerer String wenn nicht vorhanden. }
+  PROC(STRING) STRING config_string =
+    (STRING key) STRING:
+      BEGIN
+        STRING r := "";
+        FOR i TO cfg_n DO
+          IF key OF cfg[i] = key THEN r := val OF cfg[i] FI
+        OD;
+        r
+      END;
+
+{ Ganzzahlwert des Schluessels; Default wenn fehlend oder ungueltig. }
+  PROC(STRING, INT) INT config_int =
+    (STRING key, INT default) INT:
+      BEGIN
+        STRING v := config_string(key);
+        IF v /= "" THEN c2i(v, default) ELSE default FI
+      END;

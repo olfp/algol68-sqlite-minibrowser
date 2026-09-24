@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gorgona DB Browser</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>Gorgona DB Browser</h1>
+  <p class="sub" id="sub">served by Gorgona</p>
+  <div class="bar">
+    <select id="sel"></select>
+    <input id="f" placeholder="Filtern..." autocomplete="off">
+    <button id="prev" type="button">&larr;</button>
+    <button id="next" type="button">&rarr;</button>
+  </div>
+  <p id="status" class="status"></p>
+  <div class="box">
+    <table>
+      <thead id="th"></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+  <p class="foot">mini DB browser &middot; Filtern, Sortieren und Blaettern clientseitig &middot; max. 50 Zeilen je Tabelle (Server-LIMIT) &middot; read-only JSON-API</p>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
