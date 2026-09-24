@@ -208,6 +208,9 @@ BEGIN
   PROC(STRING, REF SQLITE) INT sqlite_open = NEST C "algol68_sqlite_open";
   PROC(SQLITE, STRING) STRING sqlite_exec_json =
     NEST C "algol68_sqlite_exec_json";
+  { Tabellen-Fenster mit eingebauten FK-Referenzwerten (gorgref_*) }
+  PROC(SQLITE, STRING, INT, INT) STRING sqlite_table_rows =
+    NEST C "algol68_sqlite_table_rows";
   PROC(SQLITE) STRING sqlite_schema_json =
     NEST C "algol68_sqlite_schema_json";
   PROC(SQLITE) INT sqlite_close = NEST C "algol68_sqlite_close";
@@ -388,6 +391,107 @@ BEGIN
           IF acc /= "" THEN res := s2i(acc) FI
         FI;
         res
+      END;
+
+  { String-Parameter einer Anfrage lesen (bis "&" oder Ende). Der Wert ist
+    noch URL-kodiert (siehe pct_decode weiter unten). "?fcol=A&fval=5" }
+  PROC(STRING, STRING, STRING) STRING query_string =
+    (STRING request, STRING name, STRING def) STRING:
+      BEGIN
+        STRING res := def;
+        INT q := findc(request, "?");
+        INT hit := find_sub(request, name + "=", q + 1);
+        IF hit > 0 THEN
+          INT p := hit + UPB name + 1;
+          STRING acc := "";
+          BOOL f := FALSE;
+          WHILE NOT f DO
+            IF p > UPB request THEN
+              f := TRUE
+            ELIF request[p] = "&" OR request[p] = " " OR request[p] = REPR 13 THEN
+              f := TRUE
+            ELSE
+              acc := acc + request[p];
+              p +:= 1
+            FI
+          OD;
+          IF acc /= "" THEN res := acc FI
+        FI;
+        res
+      END;
+
+  { URL-Kodierung aufloesen: "%XX" wird zum Byte, "+" zum Leerzeichen.
+    Notwendig, damit Fremdschluessel-Werte mit Sonderzeichen (Leerzeichen,
+    "&", "=") als SQL-Literal verwendbar sind. }
+  PROC(STRING) STRING pct_decode =
+    (STRING s) STRING:
+      BEGIN
+        STRING out := "";
+        INT p := LWB s;
+        WHILE p <= UPB s DO
+          IF s[p] = "%" AND p + 2 <= UPB s THEN
+            { Kein Short-Circuit: BEDINGUNG selbst prüfen, dann beide
+              Hex-Ziffern getrennt auswerten }
+            INT vh := -1; INT vl := -1;
+            IF s[p+1] >= "0" AND s[p+1] <= "9" THEN
+              vh := ABS s[p+1] - ABS "0"
+            ELIF s[p+1] >= "a" AND s[p+1] <= "f" THEN
+              vh := ABS s[p+1] - ABS "a" + 10
+            ELIF s[p+1] >= "A" AND s[p+1] <= "F" THEN
+              vh := ABS s[p+1] - ABS "A" + 10
+            FI;
+            IF s[p+2] >= "0" AND s[p+2] <= "9" THEN
+              vl := ABS s[p+2] - ABS "0"
+            ELIF s[p+2] >= "a" AND s[p+2] <= "f" THEN
+              vl := ABS s[p+2] - ABS "a" + 10
+            ELIF s[p+2] >= "A" AND s[p+2] <= "F" THEN
+              vl := ABS s[p+2] - ABS "A" + 10
+            FI;
+            IF vh >= 0 AND vl >= 0 THEN
+              out := out + REPR (vh * 16 + vl);
+              p +:= 2
+            ELSE
+              out := out + s[p]
+            FI
+          ELIF s[p] = "+" THEN
+            out := out + " "
+          ELSE
+            out := out + s[p]
+          FI;
+          p +:= 1
+        OD;
+        out
+      END;
+
+  { Einen Wert als SQL-Literal schreiben: Zahlen ungequotet (fuer den
+    Integer-Primaerschluessel), alles andere in einfache Quote-Zeichen
+    (repe 39), enthaltene Quote-Zeichen werden verdoppelt. }
+  PROC(STRING) STRING sql_lit =
+    (STRING v) STRING:
+      BEGIN
+        BOOL num := LWB v <= UPB v;
+        INT p := LWB v;
+        WHILE p <= UPB v AND num DO
+          IF p = LWB v AND v[p] = "-" THEN
+            SKIP
+          ELIF v[p] < "0" OR v[p] > "9" THEN
+            num := FALSE
+          FI;
+          p +:= 1
+        OD;
+        IF num THEN
+          v
+        ELSE
+          STRING out := REPR 39;
+          FOR k FROM LWB v TO UPB v DO
+            IF v[k] = REPR 39 THEN
+              out := out + REPR 39 + REPR 39
+            ELSE
+              out := out + v[k]
+            FI
+          OD;
+          out + REPR 39
+        FI
       END;
 
   { Den idx-ten Tabellennamen aus dem sqlite_master-JSON holen, etwa
@@ -635,13 +739,49 @@ BEGIN
               INT count := query_int(request, "count", 50);
               IF count < 1 THEN count := 50 FI;
               IF count > 500 THEN count := 500 FI;
-              STRING q := "SELECT * FROM " + ident(table OF routes[i])
-                            + " LIMIT " + whole(count, 0)
-                            + " OFFSET " + whole(offset, 0) + ";";
-              body := "{ ""table"" : """ + (table OF routes[i])
-                       + """, ""total"" : " + (total OF routes[i])
-                       + ", ""rows"" : "
-                       + sqlite_exec_json(db, q) + " }";
+              { FK-Navigation: fcol/fval filtern nach einer Spalte (dem
+                Primaerschluessel der Zieltabelle). Geliefert wird neben dem
+                Treffer dessen 0-basierte Position in der Standard-
+                Zeilenreihenfolge (idx), damit das Frontend den Datensatz an
+                einer gewuenschten Stelle (3. Zeile) positionieren kann. }
+              STRING fcol := pct_decode(query_string(request, "fcol", ""));
+              STRING fval := pct_decode(query_string(request, "fval", ""));
+              IF fcol = "" THEN
+                { Tabelle ohne Filter: Windows im rowid-Format; das
+                  Frontend bekommt pro FK-Spalte zusaetzlich den
+                  Anzeigewert der Ziel-Tabelle (gorgref_*) fuer den
+                  Badge-Text. }
+                body := "{ ""table"" : """ + (table OF routes[i])
+                         + """, ""total"" : " + (total OF routes[i])
+                         + ", ""rows"" : "
+                         + sqlite_table_rows(db, table OF routes[i],
+                                             offset, count) + " }"
+              ELSE
+                STRING fq := "SELECT (SELECT COUNT(*) FROM "
+                              + ident(table OF routes[i])
+                              + " x WHERE x.rowid < m.rowid) AS "
+                              + ident("gorgidx") + ", m.* FROM "
+                              + ident(table OF routes[i])
+                              + " m WHERE " + ident(fcol) + " = "
+                              + sql_lit(fval) + " LIMIT 1;";
+                STRING exec := sqlite_exec_json(db, fq);
+                INT idx := -1;
+                { "[]" = kein Treffer. Erster Treffer liefert "i" = Position }
+                BOOL empty := FALSE;
+                IF UPB exec >= 2 THEN
+                  IF exec[1:2] = "[]" THEN empty := TRUE FI
+                FI;
+                IF empty THEN
+                  exec := "[]";
+                  idx := -1
+                ELSE
+                  idx := s2i(json_value(exec))
+                FI;
+                body := "{ ""table"" : """ + (table OF routes[i])
+                         + """, ""total"" : " + (total OF routes[i])
+                         + ", ""idx"" : " + whole(idx, 0)
+                         + ", ""rows"" : " + exec + " }"
+              FI;
               status := "200 OK"
             FI
           OD

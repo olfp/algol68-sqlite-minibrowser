@@ -24,6 +24,9 @@
   𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐫𝐞𝐟 𝐬𝐪𝐥𝐢𝐭𝐞) 𝐢𝐧𝐭 sqlite_open = 𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_open";
   𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 sqlite_exec_json =
     𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_exec_json";
+  { Tabellen-Fenster mit eingebauten FK-Referenzwerten (gorgref_*) }
+  𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭, 𝐢𝐧𝐭) 𝐬𝐭𝐫𝐢𝐧𝐠 sqlite_table_rows =
+    𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_table_rows";
   𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞) 𝐬𝐭𝐫𝐢𝐧𝐠 sqlite_schema_json =
     𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_schema_json";
   𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞) 𝐢𝐧𝐭 sqlite_close = 𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_close";
@@ -204,6 +207,107 @@
           𝐢𝐟 acc /= "" 𝐭𝐡𝐞𝐧 res ← 𝑠2𝑖(acc) 𝐟𝐢
         𝐟𝐢;
         res
+      𝐞𝐧𝐝;
+
+  { String-Parameter einer Anfrage lesen (bis "&" oder Ende). Der Wert ist
+    noch URL-kodiert (siehe pct_decode weiter unten). "?fcol=A&fval=5" }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 query_string =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 request, 𝐬𝐭𝐫𝐢𝐧𝐠 name, 𝐬𝐭𝐫𝐢𝐧𝐠 def) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 res ← def;
+        𝐢𝐧𝐭 q ← 𝑓𝑖𝑛𝑑𝑐(request, "?");
+        𝐢𝐧𝐭 hit ← find_sub(request, name + "=", q + 1);
+        𝐢𝐟 hit > 0 𝐭𝐡𝐞𝐧
+          𝐢𝐧𝐭 p ← hit + 𝐮𝐩𝐛 name + 1;
+          𝐬𝐭𝐫𝐢𝐧𝐠 acc ← "";
+          𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 request 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐢𝐟 request[p] = "&" 𝐨𝐫 request[p] = " " 𝐨𝐫 request[p] = 𝐫𝐞𝐩𝐫 13 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐬𝐞
+              acc ← acc + request[p];
+              p +:= 1
+            𝐟𝐢
+          𝐨𝐝;
+          𝐢𝐟 acc /= "" 𝐭𝐡𝐞𝐧 res ← acc 𝐟𝐢
+        𝐟𝐢;
+        res
+      𝐞𝐧𝐝;
+
+  { URL-Kodierung aufloesen: "%XX" wird zum Byte, "+" zum Leerzeichen.
+    Notwendig, damit Fremdschluessel-Werte mit Sonderzeichen (Leerzeichen,
+    "&", "=") als SQL-Literal verwendbar sind. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 pct_decode =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 s) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 out ← "";
+        𝐢𝐧𝐭 p ← 𝐥𝐰𝐛 s;
+        𝐰𝐡𝐢𝐥𝐞 p ≤ 𝐮𝐩𝐛 s 𝐝𝐨
+          𝐢𝐟 s[p] = "%" 𝐚𝐧𝐝 p + 2 ≤ 𝐮𝐩𝐛 s 𝐭𝐡𝐞𝐧
+            { Kein Short-Circuit: BEDINGUNG selbst prüfen, dann beide
+              Hex-Ziffern getrennt auswerten }
+            𝐢𝐧𝐭 vh ← -1; 𝐢𝐧𝐭 vl ← -1;
+            𝐢𝐟 s[p+1] ≥ "0" 𝐚𝐧𝐝 s[p+1] ≤ "9" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "0"
+            𝐞𝐥𝐢𝐟 s[p+1] ≥ "a" 𝐚𝐧𝐝 s[p+1] ≤ "f" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "a" + 10
+            𝐞𝐥𝐢𝐟 s[p+1] ≥ "A" 𝐚𝐧𝐝 s[p+1] ≤ "F" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "A" + 10
+            𝐟𝐢;
+            𝐢𝐟 s[p+2] ≥ "0" 𝐚𝐧𝐝 s[p+2] ≤ "9" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "0"
+            𝐞𝐥𝐢𝐟 s[p+2] ≥ "a" 𝐚𝐧𝐝 s[p+2] ≤ "f" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "a" + 10
+            𝐞𝐥𝐢𝐟 s[p+2] ≥ "A" 𝐚𝐧𝐝 s[p+2] ≤ "F" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "A" + 10
+            𝐟𝐢;
+            𝐢𝐟 vh ≥ 0 𝐚𝐧𝐝 vl ≥ 0 𝐭𝐡𝐞𝐧
+              out ← out + 𝐫𝐞𝐩𝐫 (vh * 16 + vl);
+              p +:= 2
+            𝐞𝐥𝐬𝐞
+              out ← out + s[p]
+            𝐟𝐢
+          𝐞𝐥𝐢𝐟 s[p] = "+" 𝐭𝐡𝐞𝐧
+            out ← out + " "
+          𝐞𝐥𝐬𝐞
+            out ← out + s[p]
+          𝐟𝐢;
+          p +:= 1
+        𝐨𝐝;
+        out
+      𝐞𝐧𝐝;
+
+  { Einen Wert als SQL-Literal schreiben: Zahlen ungequotet (fuer den
+    Integer-Primaerschluessel), alles andere in einfache Quote-Zeichen
+    (repe 39), enthaltene Quote-Zeichen werden verdoppelt. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 sql_lit =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 v) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐛𝐨𝐨𝐥 num ← 𝐥𝐰𝐛 v ≤ 𝐮𝐩𝐛 v;
+        𝐢𝐧𝐭 p ← 𝐥𝐰𝐛 v;
+        𝐰𝐡𝐢𝐥𝐞 p ≤ 𝐮𝐩𝐛 v 𝐚𝐧𝐝 num 𝐝𝐨
+          𝐢𝐟 p = 𝐥𝐰𝐛 v 𝐚𝐧𝐝 v[p] = "-" 𝐭𝐡𝐞𝐧
+            𝐬𝐤𝐢𝐩
+          𝐞𝐥𝐢𝐟 v[p] < "0" 𝐨𝐫 v[p] > "9" 𝐭𝐡𝐞𝐧
+            num ← 𝐟𝐚𝐥𝐬𝐞
+          𝐟𝐢;
+          p +:= 1
+        𝐨𝐝;
+        𝐢𝐟 num 𝐭𝐡𝐞𝐧
+          v
+        𝐞𝐥𝐬𝐞
+          𝐬𝐭𝐫𝐢𝐧𝐠 out ← 𝐫𝐞𝐩𝐫 39;
+          𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 v 𝐭𝐨 𝐮𝐩𝐛 v 𝐝𝐨
+            𝐢𝐟 v[k] = 𝐫𝐞𝐩𝐫 39 𝐭𝐡𝐞𝐧
+              out ← out + 𝐫𝐞𝐩𝐫 39 + 𝐫𝐞𝐩𝐫 39
+            𝐞𝐥𝐬𝐞
+              out ← out + v[k]
+            𝐟𝐢
+          𝐨𝐝;
+          out + 𝐫𝐞𝐩𝐫 39
+        𝐟𝐢
       𝐞𝐧𝐝;
 
   { Den idx-ten Tabellennamen aus dem sqlite_master-JSON holen, etwa
@@ -451,13 +555,49 @@
               𝐢𝐧𝐭 count ← query_int(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "count", 50);
               𝐢𝐟 count < 1 𝐭𝐡𝐞𝐧 count ← 50 𝐟𝐢;
               𝐢𝐟 count > 500 𝐭𝐡𝐞𝐧 count ← 500 𝐟𝐢;
-              𝐬𝐭𝐫𝐢𝐧𝐠 𝑞 ← "SELECT * FROM " + ident(𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
-                            + " LIMIT " + 𝑤ℎ𝑜𝑙𝑒(count, 0)
-                            + " OFFSET " + 𝑤ℎ𝑜𝑙𝑒(offset, 0) + ";";
-              𝑏𝑜𝑑𝑦 ← "{ ""table"" : """ + (𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
-                       + """, ""total"" : " + (𝑡𝑜𝑡𝑎𝑙 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
-                       + ", ""rows"" : "
-                       + sqlite_exec_json(db, 𝑞) + " }";
+              { FK-Navigation: fcol/fval filtern nach einer Spalte (dem
+                Primaerschluessel der Zieltabelle). Geliefert wird neben dem
+                Treffer dessen 0-basierte Position in der Standard-
+                Zeilenreihenfolge (idx), damit das Frontend den Datensatz an
+                einer gewuenschten Stelle (3. Zeile) positionieren kann. }
+              𝐬𝐭𝐫𝐢𝐧𝐠 fcol ← pct_decode(query_string(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "fcol", ""));
+              𝐬𝐭𝐫𝐢𝐧𝐠 fval ← pct_decode(query_string(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "fval", ""));
+              𝐢𝐟 fcol = "" 𝐭𝐡𝐞𝐧
+                { Tabelle ohne Filter: Windows im rowid-Format; das
+                  Frontend bekommt pro FK-Spalte zusaetzlich den
+                  Anzeigewert der Ziel-Tabelle (gorgref_*) fuer den
+                  Badge-Text. }
+                𝑏𝑜𝑑𝑦 ← "{ ""table"" : """ + (𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                         + """, ""total"" : " + (𝑡𝑜𝑡𝑎𝑙 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                         + ", ""rows"" : "
+                         + sqlite_table_rows(db, 𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖],
+                                             offset, count) + " }"
+              𝐞𝐥𝐬𝐞
+                𝐬𝐭𝐫𝐢𝐧𝐠 fq ← "SELECT (SELECT COUNT(*) FROM "
+                              + ident(𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                              + " x WHERE x.rowid < m.rowid) AS "
+                              + ident("gorgidx") + ", m.* FROM "
+                              + ident(𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                              + " m WHERE " + ident(fcol) + " = "
+                              + sql_lit(fval) + " LIMIT 1;";
+                𝐬𝐭𝐫𝐢𝐧𝐠 exec ← sqlite_exec_json(db, fq);
+                𝐢𝐧𝐭 idx ← -1;
+                { "[]" = kein Treffer. Erster Treffer liefert "i" = Position }
+                𝐛𝐨𝐨𝐥 empty ← 𝐟𝐚𝐥𝐬𝐞;
+                𝐢𝐟 𝐮𝐩𝐛 exec ≥ 2 𝐭𝐡𝐞𝐧
+                  𝐢𝐟 exec[1:2] = "[]" 𝐭𝐡𝐞𝐧 empty ← 𝐭𝐫𝐮𝐞 𝐟𝐢
+                𝐟𝐢;
+                𝐢𝐟 empty 𝐭𝐡𝐞𝐧
+                  exec ← "[]";
+                  idx ← -1
+                𝐞𝐥𝐬𝐞
+                  idx ← 𝑠2𝑖(json_value(exec))
+                𝐟𝐢;
+                𝑏𝑜𝑑𝑦 ← "{ ""table"" : """ + (𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                         + """, ""total"" : " + (𝑡𝑜𝑡𝑎𝑙 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                         + ", ""idx"" : " + 𝑤ℎ𝑜𝑙𝑒(idx, 0)
+                         + ", ""rows"" : " + exec + " }"
+              𝐟𝐢;
               𝑠𝑡𝑎𝑡𝑢𝑠 ← "200 OK"
             𝐟𝐢
           𝐨𝐝

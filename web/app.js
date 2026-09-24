@@ -19,7 +19,9 @@
       dlgForm = document.getElementById("dlgForm"),
       erBtn = document.getElementById("erBtn"),
       erClose = document.getElementById("erClose"),
-      er = document.getElementById("er");
+      er = document.getElementById("er"),
+      backBtn = document.getElementById("backBtn"),
+      fwdBtn = document.getElementById("fwdBtn");
 
   var BATCH = 50,              /* Zeilen pro Request (Server-Default) */
       MAX = 3 * BATCH,         /* Limit der geladenen Zeilen */
@@ -32,12 +34,23 @@
   var loading = false;
   var rowH = 30, headH = 0;
   var widths = {};             /* Spaltenname -> Pixelbreite (per Drag) */
+  var estW = {};               /* Spaltenname -> geschaetzte Mindestbreite (px) */
   var dragging = null;         /* aktiver Spalten-Resize */
   var dbBase = "db";           /* Basisiname der aktiven Datenbank */
+  var schemaTables = [], fkByRoute = {}, currentFk = {};
+  var hl = -1;                 /* absolute Zeile der FK-Navigation */
+
+  /* Verlauf fuer die "Zurueck"/"Vor"-Buttons: je Eintrag { route, hl }
+     (hl = absolute Zeilennummer des markierten Datensatzes, -1 = Uebersicht).
+     hl dient sowohl dem Landepunkt der FK-Navigation als auch dem beim
+     Zurueck wieder markierten Ausgangsdatensatz. */
+  var hist = [], hi = -1, MAXHIST = 100;
 
   function colStyle(name) {
     var w = widths[name];
-    return w ? " style='width:" + w + "px;min-width:" + w + "px;max-width:" + w + "px'" : "";
+    if (w) return " style='width:" + w + "px;min-width:" + w + "px;max-width:" + w + "px'";
+    var m = estW[name];
+    return m ? " style='min-width:" + m + "px'" : "";
   }
   function resizeColumn(ci, w) {
     var cell = thead.rows[0].cells[ci];
@@ -55,12 +68,60 @@
   function escAttr(s) {
     return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
-  function td(v, num, style) {
+  /* Route aus einem Tabellennamen wie im Server (path_of): Kleinbuchstaben,
+     alles außer [a-z0-9_] wird weggelassen, davor "/api/". */
+  function toRoute(name) {
+    var out = "";
+    String(name).split("").forEach(function (c) {
+      if (/[a-z0-9_]/.test(c)) out += c;
+      else if (/[A-Z]/.test(c)) out += c.toLowerCase();
+    });
+    return "/api/" + out;
+  }
+  function td(v, num, style, bad) {
     if (v === null || v === undefined)
       return '<td class="null' + (num ? " num" : "") + '"' + style + ">-</td>";
+    var pre = bad || "";
     if (typeof v === "number")
-      return '<td class="num"' + style + ">" + v + "</td>";
-    return "<td" + style + ">" + esc(v) + "</td>";
+      return '<td class="num"' + style + ">" + pre +
+             (pre ? '<span class="gid">' + v + "</span>" : v) + "</td>";
+    return "<td" + style + ">" + pre + esc(v) + "</td>";
+  }
+  /* Aus einer Server-Antwort die Zeilen bereinigen: Referenzwerte
+     "gorgref_<from>" (Anzeige-Spalte der Ziel-Tabelle) wandern als
+     Map __refs auf die Zeile, echte Spalten bleiben erhalten. */
+  function refsFrom(d) {
+    var out = [];
+    (d && d.rows ? d.rows : []).forEach(function (row) {
+      var clean = {}, refs = null;
+      Object.keys(row).forEach(function (k) {
+        if (k.indexOf("gorgref_") === 0) {
+          if (!refs) refs = {};
+          refs[k.slice(8)] = row[k];
+        } else clean[k] = row[k];
+      });
+      if (refs) clean.__refs = refs;
+      out.push(clean);
+    });
+    return out;
+  }
+  function rowCols(arr) {
+    if (!arr.length) return [];
+    return Object.keys(arr[0]).filter(function (k) { return k !== "__refs"; });
+  }
+  function histButtons() {
+    if (!backBtn || !fwdBtn) return;
+    backBtn.disabled = hi <= 0;
+    fwdBtn.disabled = hi >= hist.length - 1;
+  }
+  function pushHist(route, h) {
+    while (hist.length - 1 > hi) hist.pop();    /* Vorwaerts-Eintraege verwerfen */
+    var last = hist[hi];
+    if (last && last.route === route && last.hl === h) return;
+    hist.push({ route: route, hl: h });
+    if (hist.length > MAXHIST) hist.shift();
+    hi = hist.length - 1;
+    histButtons();
   }
   function applyFilter() {
     var q = filt.value.toLowerCase();
@@ -68,10 +129,49 @@
     rows.forEach(function (r, i) {
       var hit = !q;
       for (var k in r) {
+        if (k === "__refs") continue;
         if (r[k] !== null && r[k] !== undefined &&
             String(r[k]).toLowerCase().indexOf(q) > -1) { hit = true; break; }
       }
       if (hit) filtered.push(i);
+    });
+  }
+  /* Grobe Textbreite in em (Kopfzeile .78rem = Faktor 12.5, Zelle 16px). */
+  function txtEm(s) {
+    s = String(s);
+    var w = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c >= 48 && c <= 57) w += 0.58;          /* Ziffern (tabular) */
+      else if (c >= 65 && c <= 90) w += 0.74;     /* Grossbuchstaben */
+      else if (c >= 97 && c <= 122) w += 0.54;    /* Kleinbuchstaben */
+      else if (c === 32) w += 0.32;               /* Leerzeichen */
+      else w += 0.72;
+    }
+    return w;
+  }
+  /* Mindestbreite je Spalte aus Kopfzeile + sichtbaren Werten schuetzen.
+     Bei Fremdschluessel-Spalten kommt der Korb aus Badge + ID-Slot dazu -
+     die reine Browser-Autobreite wuerde die Spalte zu schmal machen. */
+  function estimateCols() {
+    var src = currentFk || {};
+    cols.forEach(function (name) {
+      var f = src[name];
+      var w = txtEm(name) * 12.5 + 16;            /* Kopfzeile .78rem + Padding */
+      rows.forEach(function (r) {
+        var v = r[name];
+        if (v === null || v === undefined) return;
+        var t = txtEm(String(v)) * 16 + 20;       /* Wert @16px + Padding */
+        if (f) {
+          var rr = r.__refs ? r.__refs[name] : null;
+          var label = "\u2192";
+          if (rr !== null && rr !== undefined) label += " " + rr;
+          t = Math.max(t, txtEm(label) * 16 + 6 + 12 + 58 + 20); /* Badge+ID-Slot */
+        }
+        if (t > w) w = t;
+      });
+      w = Math.max(40, Math.min(300, Math.ceil(w)));
+      if (w > (estW[name] || 0)) estW[name] = w;
     });
   }
   function measure() {
@@ -82,6 +182,7 @@
   function render() {
     applyFilter();
     if (!cols.length) return;
+    estimateCols();
     var head = "<tr>";
     for (var i = 0; i < cols.length; i++) {
       var name = cols[i];
@@ -97,11 +198,25 @@
       }
     });
     var out = "";
+    var src = currentFk || {};
     filtered.forEach(function (idx) {
       var r = rows[idx];
-      out += "<tr>";
-      for (var c = 0; c < cols.length; c++)
-        out += td(r[cols[c]], numeric[cols[c]], colStyle(cols[c]));
+      var cls = (hl >= 0 && offs[idx] === hl) ? ' class="hl"' : "";
+      out += "<tr" + cls + ">";
+      for (var c = 0; c < cols.length; c++) {
+        var f = src[cols[c]];
+        var label = "";
+        if (f) {
+          var rr = r.__refs ? r.__refs[cols[c]] : null;
+          label = (rr === null || rr === undefined)
+            ? "\u2192" : "\u2192 " + esc(String(rr));
+        }
+        var bad = f
+          ? ' <span class="fkNav" role="button" tabindex="0" title="\u2192 ' +
+            escAttr(f.ref) + '">' + label + "</span>"
+          : "";
+        out += td(r[cols[c]], numeric[cols[c]], colStyle(cols[c]), bad);
+      }
       out += '<td class="fill"></td></tr>';
     });
     tbody.innerHTML = out;
@@ -177,12 +292,12 @@
         if (d && d.rows && d.rows.length) {
           var v = visibleOn();
           var off = next;
-          d.rows.forEach(function (row) {
+          refsFrom(d).forEach(function (row) {
             rows.push(row);
             offs.push(off);
             off += 1;
           });
-          if (!cols.length && rows.length) cols = Object.keys(rows[0]);
+          if (!cols.length && rows.length) cols = rowCols(rows);
           if (d.total) tot = d.total;
           trimWindow(v.firstOff, v.lastOff);
           render();
@@ -207,7 +322,7 @@
         if (g !== gen) return;
         if (d && d.rows) {
           var v = visibleOn();
-          var ins = d.rows.slice(0, keep);
+          var ins = refsFrom(d).slice(0, keep);
           base = prevBase;
           var insRows = [], insOffs = [];
           ins.forEach(function (row, i) {
@@ -228,23 +343,38 @@
       })
       .then(function () { loading = false; });
   }
-  function pick() {
-    t = sel.value;
-    if (!t) return;
-    gen++;
+  /* Route laden und anzeigen. h >= 0 hebt die absolute Zeile h hervor
+     (Landepunkt; das Fenster beginnt bei max(0, h-2)), h = -1 zeigt eine
+     gewoehnliche Uebersicht ab Zeile 0. "push" traegt den Zustand in die
+     Historie ein (Zurueck/Vor). "srcOff" markiert vor dem Push den aktuellen
+     Datensatz im bisherigen Verlaufs-Eintrag - so ist beim Zurueck das
+     Ausgangs-Objekt markiert, dessen Badge man gefolgt ist. */
+  function showRoute(route, h, push, srcOff) {
+    if (!selectTable(route)) return;
+    t = route;
+    hl = typeof h === "number" ? h : -1;
+    var g = ++gen;
     loading = false;
     rows = []; offs = []; filtered = []; cols = [];
     tot = 0; base = 0;
+    currentFk = fkByRoute[route] || {};
+    var base0 = hl >= 0 ? Math.max(0, hl - 2) : 0;
     status.textContent = "Lade ...";
-    var g = gen;
-    fetch(t + "?offset=0&count=" + BATCH)
+    fetch(route + "?offset=" + base0 + "&count=" + BATCH)
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (g !== gen) return;
-        rows = d.rows || [];
-        offs = []; rows.forEach(function (_, i) { offs.push(i); });
-        cols = rows.length ? Object.keys(rows[0]) : [];
+        rows = refsFrom(d);
+        offs = []; rows.forEach(function (_, i) { offs.push(base0 + i); });
+        cols = rowCols(rows);
         tot = d.total || rows.length;
+        base = base0;
+        box.scrollTop = 0;
+        if (push) {
+          if (typeof srcOff === "number" && srcOff >= 0 && hist[hi])
+            hist[hi].hl = srcOff;
+          pushHist(route, hl);
+        }
         render();
         ensureWindow();
       })
@@ -253,6 +383,49 @@
           status.textContent = "Fehler beim Laden: " + e;
           status.className = "status err";
         }
+      });
+  }
+  function pick() {
+    showRoute(sel.value, -1, true);
+  }
+  function histGo(delta) {
+    var ni = hi + delta;
+    if (ni < 0 || ni >= hist.length) return;
+    hi = ni;
+    histButtons();
+    showRoute(hist[ni].route, hist[ni].hl, false);
+  }
+  function selectTable(route) {
+    for (var i = 0; i < sel.options.length; i++)
+      if (sel.options[i].value === route) {
+        sel.selectedIndex = i; sel.value = route; return true;
+      }
+    return false;
+  }
+  /* Fremdschluessel-Navigation: Ziel-Tabelle wechseln und den referenzierten
+     Datensatz als 3. Datenzeile positionieren (2 Zeilen Kontext darüber).
+     Der Server liefert dazu per ?fcol=&fval= die 0-basierte Position (idx);
+     das Fenster beginnt dann bei max(0, idx-2). */
+  function fkNavigate(refRoute, to, val, srcOff) {
+    if (!selectTable(refRoute)) return;
+    var g = ++gen;
+    loading = false;
+    currentFk = fkByRoute[refRoute] || {};
+    status.textContent = "Suche " + to + " = " + val + " ...";
+    fetch(refRoute + "?fcol=" + encodeURIComponent(to) +
+          "&fval=" + encodeURIComponent(String(val)))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (g !== gen) return;
+        if (!d || !d.rows || !d.rows.length || typeof d.idx !== "number" || d.idx < 0) {
+          status.textContent = "Kein Datensatz mit " + to + " = " + val;
+          render();
+          return;
+        }
+        showRoute(refRoute, d.idx, true, srcOff);
+      })
+      .catch(function (e) {
+        if (g === gen) status.textContent = "Fehler beim Navigieren: " + e;
       });
   }
   function showRow(rowObj) {
@@ -286,6 +459,9 @@
     });
   }
   sel.addEventListener("change", pick);
+  backBtn.addEventListener("click", function () { histGo(-1); });
+  fwdBtn.addEventListener("click", function () { histGo(1); });
+  histButtons();
   filt.addEventListener("input", function () { render(); });
   box.addEventListener("scroll", ensureWindow);
   thead.addEventListener("mousedown", function (e) {
@@ -324,6 +500,23 @@
     var idx = Array.prototype.indexOf.call(tbody.rows, tr);
     if (idx >= 0 && filtered[idx] !== undefined) showRow(rows[filtered[idx]]);
   });
+  tbody.addEventListener("click", function (e) {
+    var nav = e.target.closest ? e.target.closest(".fkNav") : null;
+    if (!nav) return;
+    var ctd = nav.parentNode;
+    if (!ctd || ctd.tagName !== "TD") return;
+    var tr = ctd.parentNode;
+    var ri = Array.prototype.indexOf.call(tbody.rows, tr);
+    var ci = Array.prototype.indexOf.call(tr.cells, ctd);
+    if (ri < 0 || ci < 0 || ci >= cols.length) return;
+    var fk = currentFk[cols[ci]];
+    if (!fk) return;
+    var row = rows[filtered[ri]];
+    if (!row) return;
+    var val = row[cols[ci]];
+    if (val === null || val === undefined) return;
+    fkNavigate(toRoute(fk.ref), fk.to, val, offs[filtered[ri]]);
+  });
   document.getElementById("dlgClose").addEventListener("click", closeDlg);
   overlay.addEventListener("click", function (e) {
     if (e.target === overlay) closeDlg();
@@ -340,6 +533,23 @@
       dbBase = h.database;
       sub.textContent = "served by Gorgona \u00b7 SQLite-Datenbank " + h.database;
     }
+  }).catch(function () {});
+  /* Schema einmal laden: dient dem ER-Diagramm und der FK-Navigation
+     (Route fuer Zieltabelle, "to"/"ref" je Fremdschluessel-Spalte). */
+  function buildFkMap() {
+    fkByRoute = {};
+    (schemaTables || []).forEach(function (tbl) {
+      var m = {};
+      (tbl.fks || []).forEach(function (f) { m[f.from] = { to: f.to, ref: f.ref }; });
+      if (Object.keys(m).length) fkByRoute[toRoute(tbl.name)] = m;
+    });
+  }
+  fetch("api/schema").then(function (r) { return r.json(); }).then(function (d) {
+    schemaTables = (d && d.tables) ? d.tables : [];
+    buildFkMap();
+    erData = schemaTables;
+    currentFk = fkByRoute[t] || {};
+    render();
   }).catch(function () {});
 
   /* ---- ER-Diagramm ---- */

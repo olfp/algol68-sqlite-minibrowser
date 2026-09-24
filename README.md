@@ -104,6 +104,32 @@ curl 'http://localhost:8080/api/track?offset=50&count=25'
 
 The frontend uses this to implement infinite scrolling: it keeps a sliding window of at most `3 × 50 = 150` loaded rows, prefetches the next chunk as you approach the window edge, discards rows that scrolled out of view, and re-loads them as needed when you scroll back up.
 
+A single row can be located directly by any column with `fcol` and `fval` (the value is URL-encoded; the server decodes `%XX` and `+`). This is used for **foreign-key navigation**: the response then also carries `idx`, the row's 0-based position in the default row order, so the frontend can place the referenced record exactly as the 3rd visible row:
+
+```sh
+curl 'http://localhost:8080/api/track?fcol=AlbumId&fval=5'
+```
+
+```json
+{ "table" : "Track", "total" : 3503, "idx" : 22, "rows" : [ { "gorgidx" : 22, "TrackId" : 23, … } ] }
+```
+
+In the table view, every foreign-key value (detected from the schema) is preceded by a small **→** badge (the ID itself sits in a right-aligned slot with reserved width, so longer IDs — up to `MaxInt` — don't shift the badge); clicking the badge switches to the referenced table and shows the referenced record as the **3rd data row** (two rows of context above it), highlighted in the table. The position lookup keeps the record in place even for huge tables, because the window fetch starts at `max(0, idx − 2)`.
+
+Navigation history is remembered: the browser view keeps a stack of `{ table, row }` steps and offers **`<` / `>` buttons at the far right of the title line** to step back and forward through it (forward steps are discarded once you navigate somewhere new). Following a foreign key, stepping **back** marks the record you followed (its badge row) again; stepping forward restores the referenced record. Table columns carry an estimated minimal width (from the visible values plus the badge/id basket for foreign-key columns) so FK columns always fit their content.
+
+The badge also shows the referenced record's **display value** — the `NAME` column of the target table, or the first non-ID column if there is no `NAME`. Each windowed table response carries these per row as extra keys `gorgref_<fromColumn>` (a correlated subquery on the target table; `null` when no row matches), so the badge needs no separate request:
+
+```sh
+curl 'http://localhost:8080/api/album?offset=0&count=1'
+```
+
+```json
+{ "table" : "Album", "total" : 347, "rows" : [ { "AlbumId" : 1, "Title" : "For Those About To Rock We Salute You", "ArtistId" : 1, "gorgref_ArtistId" : "AC/DC" } ] }
+```
+
+The client strips these synthetic keys before building the column headers and only uses them as badge text.
+
 ## Project layout
 
 | File                | Purpose |
@@ -113,7 +139,7 @@ The frontend uses this to implement infinite scrolling: it keeps a sliding windo
 | `gorgona.a68`         | Generated UPPER-stropping main source (output of `u682a68`, do not edit) |
 | `gorgona-joined.a68`  | `transput.a68` spliced behind the opening `BEGIN` of `gorgona.a68` (do not edit) |
 | `transput_wrapper.c`| Minimal NEST-C glue: raw file read and raw descriptor write, one byte per cell — the only byte-exact transput primitives |
-| `sqlite_wrapper.c`  | NEST-C glue: open DB, run `SELECT` and format the result as JSON directly in C |
+| `sqlite_wrapper.c`  | NEST-C glue: open DB, run `SELECT` and format the result as JSON directly in C; schema cache for FK display values (`gorgref_*`) and the ER diagram |
 | `sock_wrapper.c`    | NEST-C glue: TCP `listen`/`accept` (plus `SO_NOSIGPIPE` on accepted sockets) |
 | `thread_wrapper.c`  | NEST-C glue: spawn the worker threads and register them with the Boehm GC used by the Algol 68 runtime |
 | `gorgona.conf`        | Configuration file (see Run): database to browse, port, workers |

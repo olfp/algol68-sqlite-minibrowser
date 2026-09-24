@@ -80,6 +80,36 @@ not_found:
   return 1;
 }
 
+/* Schreibt einen ga68-STRING ganze Dateien (Rebuild). Wird von
+ * config-<Neuschreiben> fuer Add Database gebraucht: der Inhalt wird
+ * zuerst in "<pfad>.tmp" geschrieben und dann atomar per rename()
+ * an die Stelle des Originals gesetzt, damit die gorgona.conf bei einem
+ * Absturz nicht halb fertig daliegt. Rueckgabe: 0 = ok, sonst < 0. */
+int algol68_write_file(const uint32_t *path, size_t plen, size_t pstride,
+                       const uint32_t *body, size_t blen, size_t bstride)
+{
+  char cpath[1024];
+  if (plen >= sizeof cpath) return -1;
+  for (size_t i = 0; i < plen; i++) {
+    const uint32_t *p = (const uint32_t *)((const char *)path + i * pstride);
+    cpath[i] = (char)(*p & 0xFF);
+  }
+  cpath[plen] = '\0';
+
+  char tmp[1050];
+  snprintf(tmp, sizeof tmp, "%s.tmp", cpath);
+  FILE *f = fopen(tmp, "wb");
+  if (!f) return -2;
+  for (size_t i = 0; i < blen; i++) {
+    const uint32_t *p = (const uint32_t *)((const char *)body + i * bstride);
+    unsigned char c = (unsigned char)(*p & 0xFF);
+    fwrite(&c, 1, 1, f);
+  }
+  if (fclose(f) != 0) return -3;
+  if (rename(tmp, cpath) != 0) return -4;
+  return 0;
+}
+
 /* Schreibt einen ga68-STRING byte-genau auf `fd`. Ankerpunkt der
  * byte-exakten Ausgabe: jeder Antwort-Body liegt als Zelle pro Byte vor
  * (exec_json, read_file), hier gehen die Bytes bit-genau wieder raus

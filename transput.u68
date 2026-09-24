@@ -28,6 +28,10 @@
   (Niedrigwert-Byte je Zelle, volle Laenge). }
   𝐩𝐫𝐨𝐜(𝐢𝐧𝐭, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_all = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_all";
 
+{ Zeichenkette byte-genau in eine Datei schreiben (komplett ersetzt,
+  atomar ueber "<pfad>.tmp" + rename). Rueckgabe: 0 = ok, sonst < 0. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_text = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_file";
+
 { --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare) --- }
   𝐦𝐨𝐝𝐞 𝐤𝐨𝐧𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐬𝐭𝐫𝐢𝐧𝐠 val);
   [1:16] 𝐤𝐨𝐧𝐟 cfg;

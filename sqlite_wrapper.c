@@ -94,6 +94,165 @@ static void json_quote(const char *s)
   json_put("\"");
 }
 
+/* Eine Datensatz-Zeile als JSON-Objekt ausgeben: { "Spalte" : Wert, ... }
+ * Spaltennamen und Textwerte werden gequotet, INTEGER/FLOAT bleiben nackte
+ * Zahlen, NULL wird zu null. */
+static void emit_stmt(sqlite3_stmt *stmt)
+{
+  json_put("{");
+  int ncols = sqlite3_column_count(stmt);
+  for (int c = 0; c < ncols; c++) {
+    if (c > 0) json_put(",");
+    json_quote((const char *)sqlite3_column_name(stmt, c));
+    json_put(":");
+    int t = sqlite3_column_type(stmt, c);
+    if (t == SQLITE_NULL) {
+      json_put("null");
+    } else if (t == SQLITE_INTEGER || t == SQLITE_FLOAT) {
+      json_put((const char *)sqlite3_column_text(stmt, c));
+    } else {
+      json_quote((const char *)sqlite3_column_text(stmt, c));
+    }
+  }
+  json_put("}");
+}
+
+/* Den thread-lokalen JSON-Puffer nach UCS-4 fuer ga68 konvertieren. */
+static void json_finish(uint32_t **out, size_t *out_len)
+{
+  size_t need = json_len + 1;
+  if (u32_cap < need) {
+    uint32_t *nu = realloc(json_u32, need * sizeof(uint32_t));
+    if (nu) {
+      json_u32 = nu;
+      u32_cap = need;
+    }
+  }
+  if (json_cur && json_u32) {
+    for (size_t i = 0; i <= json_len; i++)
+      json_u32[i] = (uint32_t)(unsigned char)json_cur[i];
+    *out = json_u32;
+    *out_len = json_len;
+  }
+}
+
+/* --- Schema-Cache: je Tabelle Spalten und Fremdschluessel, plus die
+   "Anzeige-Spalte" (NAME, sonst erste Spalte ohne "ID"). Daraus baut
+   algol68_sqlite_table_rows die gorgref_*-Referenzwerte fuer die
+   Badges im Frontend. --- */
+typedef struct { char *name; int pk; } SchCol;
+typedef struct { char *from, *to, *ref; } SchFk;
+typedef struct {
+  sqlite3 *db;              /* zugehoerige Connection (Cache je Datenbank) */
+  char *name, *dcol;
+  int ncols; SchCol *cols;
+  int nfks;  SchFk  *fks;
+} SchTab;
+static SchTab *sch_cache = NULL;
+static int sch_n = 0;
+
+static int dlow(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+static int ci_eq(const char *a, const char *b)
+{
+  for (; *a && *b; a++, b++)
+    if (dlow((unsigned char)*a) != dlow((unsigned char)*b)) return 0;
+  return *a == *b;
+}
+static int ci_has(const char *hay, const char *needle)
+{
+  size_t nl = strlen(needle);
+  if (!nl) return 1;
+  for (const char *p = hay; *p; p++) {
+    if (dlow((unsigned char)*p) == dlow((unsigned char)needle[0])) {
+      const char *q = p, *n = needle;
+      while (*n && *q && dlow((unsigned char)*q) == dlow((unsigned char)*n)) { q++; n++; }
+      if (!*n) return 1;
+    }
+  }
+  return 0;
+}
+
+static char *sch_dcol(SchCol *cols, int ncols)
+{
+  if (!ncols) return NULL;
+  for (int i = 0; i < ncols; i++) if (ci_eq(cols[i].name, "name")) return cols[i].name;
+  for (int i = 0; i < ncols; i++) if (ci_has(cols[i].name, "name")) return cols[i].name;
+  for (int i = 0; i < ncols; i++) if (!ci_has(cols[i].name, "id")) return cols[i].name;
+  return cols[0].name;
+}
+
+/* Cache-Eintraege sind je (Datenbank, Tabellenname) eindeutig: Mehrere
+ * Datenbanken koennen gleichnamige Tabellen haben, darum wird der
+ * sqlite3-Pointer mitgeglichen. */
+static int sch_find_idx(sqlite3 *db, const char *name)
+{
+  for (int i = 0; i < sch_n; i++)
+    if (sch_cache[i].db == db && strcmp(sch_cache[i].name, name) == 0) return i;
+  return -1;
+}
+
+/* Tabelle (Spalten + FKs) laden, wenn noetig; Rueckgabe: Index im Cache,
+   -1 wenn die Tabelle nicht existiert. Nur innerhalb des Mutex aufrufen! */
+static int sch_load(sqlite3 *db, const char *name)
+{
+  int i = sch_find_idx(db, name);
+  if (i >= 0) return i;
+  sqlite3_stmt *chk = NULL;
+  int exists = 0;
+  if (sqlite3_prepare_v2(db,
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+      -1, &chk, NULL) == SQLITE_OK) {
+    sqlite3_bind_text(chk, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(chk) == SQLITE_ROW) exists = 1;
+    sqlite3_finalize(chk);
+  }
+  if (!exists) return -1;
+
+  int ncols = 0, nfks = 0;
+  SchCol *cols = NULL; SchFk *fks = NULL;
+  sqlite3_stmt *st = NULL;
+  char *q = sqlite3_mprintf("PRAGMA table_info(%w);", name);
+  if (q && sqlite3_prepare_v2(db, q, -1, &st, NULL) == SQLITE_OK) {
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      cols = realloc(cols, (size_t)(ncols + 1) * sizeof(SchCol));
+      cols[ncols].name = strdup((const char *)sqlite3_column_text(st, 1));
+      cols[ncols].pk = sqlite3_column_int(st, 5);
+      ncols++;
+    }
+    sqlite3_finalize(st);
+  }
+  sqlite3_free(q);
+  q = sqlite3_mprintf("PRAGMA foreign_key_list(%w);", name);
+  if (q && sqlite3_prepare_v2(db, q, -1, &st, NULL) == SQLITE_OK) {
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      fks = realloc(fks, (size_t)(nfks + 1) * sizeof(SchFk));
+      fks[nfks].from = strdup((const char *)sqlite3_column_text(st, 3));
+      fks[nfks].to   = strdup((const char *)sqlite3_column_text(st, 4));
+      fks[nfks].ref  = strdup((const char *)sqlite3_column_text(st, 2));
+      nfks++;
+    }
+    sqlite3_finalize(st);
+  }
+  sqlite3_free(q);
+
+  sch_cache = realloc(sch_cache, (size_t)(sch_n + 1) * sizeof(SchTab));
+  i = sch_n;
+  sch_cache[i].db = db;
+  sch_cache[i].name = strdup(name);
+  sch_cache[i].cols = cols;  sch_cache[i].ncols = ncols;
+  sch_cache[i].fks  = fks;   sch_cache[i].nfks  = nfks;
+  sch_cache[i].dcol = sch_dcol(cols, ncols);
+  sch_n++;
+  return i;
+}
+
+static void sb_ident(sqlite3_str *sb, const char *name)
+{
+  char *qn = sqlite3_mprintf("%w", name);
+  sqlite3_str_appendall(sb, qn ? qn : "\"\"");
+  sqlite3_free(qn);
+}
+
 /* Fuehrt die Abfrage aus und liefert das Ergebnis als JSON-Array von
  * Objekten zurueck, etwa  [ {"AlbumId":1,"Title":"...","ArtistId":1}, ... ] .
  * Spaltennamen und Textzellen werden gequotet; INTEGER/FLOAT bleiben
@@ -122,22 +281,7 @@ int algol68_sqlite_exec_json(sqlite3 *db,
     while ((sr = sqlite3_step(stmt)) == SQLITE_ROW) {
       if (!first) json_put(",");
       first = 0;
-      json_put("{");
-      int ncols = sqlite3_column_count(stmt);
-      for (int c = 0; c < ncols; c++) {
-        if (c > 0) json_put(",");
-        json_quote((const char *)sqlite3_column_name(stmt, c));
-        json_put(":");
-        int t = sqlite3_column_type(stmt, c);
-        if (t == SQLITE_NULL) {
-          json_put("null");
-        } else if (t == SQLITE_INTEGER || t == SQLITE_FLOAT) {
-          json_put((const char *)sqlite3_column_text(stmt, c));
-        } else {
-          json_quote((const char *)sqlite3_column_text(stmt, c));
-        }
-      }
-      json_put("}");
+      emit_stmt(stmt);
     }
     json_put("]");
     if (sr != SQLITE_DONE) rc = sr;
@@ -150,20 +294,116 @@ int algol68_sqlite_exec_json(sqlite3 *db,
 
   /* json_cur ist thread-lokal, nach dem Unlock also unveraendert:
    * jetzt nach UCS-4 fuer ga68 konvertieren. */
-  size_t need = json_len + 1;
-  if (u32_cap < need) {
-    uint32_t *nu = realloc(json_u32, need * sizeof(uint32_t));
-    if (nu) {
-      json_u32 = nu;
-      u32_cap = need;
+  json_finish(out, out_len);
+  return rc;
+}
+
+/* Datensaetze einer Tabelle als JSON-Array mit integrierten
+ * Fremdschluessel-Referenzwerten: Zu jeder FK-Spalte wird die Anzeige-
+ * Spalte der Ziel-Tabelle (NAME, sonst erste Spalte ohne "ID") per
+ * korreliertem Subquery mitgeliefert, als Zusatzschluessel
+ * "gorgref_<from>". Das Frontend zeigt diese Werte hinter den
+ * Navigations-Badges. Abfrage bleibt im rowid-Format (LIMIT/OFFSET),
+ * damit die idx-Positionierung der fcol/fval-Navigation stimmt. */
+int algol68_sqlite_table_rows(sqlite3 *db,
+                              const uint32_t *tname, size_t tlen, size_t tstride,
+                              int64_t off, int64_t cnt,
+                              uint32_t **out, size_t *out_len)
+{
+  *out = NULL;
+  *out_len = 0;
+
+  char *ct = ucs4_to_c(tname, tlen, tstride);
+  if (!ct) return SQLITE_NOMEM;
+
+  pthread_mutex_lock(&srv_sqlite_lock);
+  json_len = 0;
+  int rc = SQLITE_ERROR;
+  int ti = sch_load(db, ct);
+  if (ti >= 0) {
+    SchTab *t = &sch_cache[ti];
+    sqlite3_str *sb = sqlite3_str_new(NULL);
+    sqlite3_str_appendall(sb, "SELECT ");
+    for (int c = 0; c < t->ncols; c++) {
+      if (c > 0) sqlite3_str_appendall(sb, ", ");
+      sb_ident(sb, t->cols[c].name);
     }
+    /* FK-Metadaten vor den Ref-Loads in den Heap kopieren: sch_load kann
+     * den Cache reallozieren und damit t->fks ungueltig machen. */
+    int nf = t->nfks;
+    struct { char *from, *to, *ref; int ridx; } *refs =
+      malloc((size_t)(nf ? nf : 1) * sizeof *refs);
+    for (int k = 0; k < nf; k++) {
+      refs[k].from = strdup(t->fks[k].from);
+      refs[k].to   = strdup(t->fks[k].to);
+      refs[k].ref  = strdup(t->fks[k].ref);
+      refs[k].ridx = -1;
+    }
+    for (int k = 0; k < nf; k++) refs[k].ridx = sch_load(db, refs[k].ref);
+    for (int k = 0; k < nf; k++) {
+      if (refs[k].ridx < 0) continue;
+      SchTab *rt = &sch_cache[refs[k].ridx];
+      if (!rt->dcol) continue;
+      sqlite3_str_appendall(sb, ", (SELECT ");
+      sb_ident(sb, rt->dcol);
+      sqlite3_str_appendall(sb, " FROM ");
+      sb_ident(sb, refs[k].ref);
+      sqlite3_str_appendall(sb, " WHERE ");
+      sb_ident(sb, refs[k].to);
+      sqlite3_str_appendall(sb, " = gorgrow.");
+      sb_ident(sb, refs[k].from);
+      sqlite3_str_appendall(sb, ") AS ");
+      size_t alen = strlen("gorgref_") + strlen(refs[k].from) + 1;
+      char *alias = malloc(alen);
+      if (alias) {
+        snprintf(alias, alen, "gorgref_%s", refs[k].from);
+        sb_ident(sb, alias);
+        free(alias);
+      }
+    }
+    for (int k = 0; k < nf; k++) {
+      free(refs[k].from); free(refs[k].to); free(refs[k].ref);
+    }
+    free(refs);
+    t = &sch_cache[ti];              /* nach den Loads neu lesen */
+    sqlite3_str_appendall(sb, " FROM ");
+    sb_ident(sb, t->name);
+    sqlite3_str_appendall(sb, " AS gorgrow LIMIT ");
+    char nb[32];
+    snprintf(nb, sizeof nb, "%lld", (long long)cnt);
+    sqlite3_str_appendall(sb, nb);
+    sqlite3_str_appendall(sb, " OFFSET ");
+    snprintf(nb, sizeof nb, "%lld", (long long)off);
+    sqlite3_str_appendall(sb, nb);
+    sqlite3_str_appendall(sb, ";");
+
+    char *sql = sqlite3_str_finish(sb);
+    if (sql) {
+      sqlite3_stmt *stmt = NULL;
+      if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        json_put("[");
+        int first = 1;
+        int sr;
+        rc = SQLITE_OK;
+        while ((sr = sqlite3_step(stmt)) == SQLITE_ROW) {
+          if (!first) json_put(",");
+          first = 0;
+          emit_stmt(stmt);
+        }
+        json_put("]");
+        if (sr != SQLITE_DONE) rc = sr;
+        sqlite3_finalize(stmt);
+      }
+      sqlite3_free(sql);
+    }
+  } else {
+    json_put("[]");
   }
-  if (json_cur && json_u32) {
-    for (size_t i = 0; i <= json_len; i++)
-      json_u32[i] = (uint32_t)(unsigned char)json_cur[i];
-    *out = json_u32;
-    *out_len = json_len;
-  }
+  pthread_mutex_unlock(&srv_sqlite_lock);
+
+  free(ct);
+
+  json_finish(out, out_len);
   return rc;
 }
 
