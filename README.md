@@ -77,16 +77,32 @@ curl http://localhost:8080/api/album      # Chinook: table "Album"
 | `/style.css`         | frontend stylesheet (from `web/`)                 |
 | `/api/tables`        | JSON list of all table routes                     |
 | `/api/health`        | `{ "status" : "ok", "database" : "<basename of the active DB>" }` |
+| `/api/schema`        | full schema as JSON for the ER diagram (see below) |
 | `/api/<table>`       | one route per table of the database (see below)   |
 | any other path       | `404 Not Found` with JSON body                    |
 
-Table routes are built from the database schema at startup. The table name is lower-cased and stripped to `[a-z0-9_]`, so Chinook's `InvoiceLine` answers on `/api/invoiceline` and a table named `Order Details` answers on `/api/orderdetails`. Identifiers are quoted properly in the generated `SELECT`, so table names with spaces (or embedded quotes) work.
-
-Each table route returns up to 50 rows:
+`/api/schema` returns every table with its columns (in declared order, `pk` marks the primary-key index, `0` = not part of the PK) and its foreign keys (`from`/`to` column names and the referenced table in `ref`). It is computed once at startup from `sqlite_master`, `PRAGMA table_info` and `PRAGMA foreign_key_list`:
 
 ```json
-{ "table" : "Album", "rows" : [ { "AlbumId" : 1, "Title" : "For Those About To Rock We Salute You", "ArtistId" : 1 }, … ] }
+{ "tables" : [ { "name" : "Album", "cols" : [ { "name" : "AlbumId", "pk" : 1 }, … ],
+                 "fks" : [ { "from" : "ArtistId", "to" : "ArtistId", "ref" : "Artist" } ] }, … ] }
 ```
+
+The frontend button "ER-Diagramm" in the title line opens this schema as a diagram: every table is a draggable entity; foreign keys are drawn as arrows from a column of one entity to the referenced column of the other (entity column headers, PK columns and FK columns are highlighted). Entities are laid out automatically in layers with the fewest possible edge crossings; their positions are saved in `localStorage`, keyed per database, and a "Reset" button restores the automatic layout. The ER window (and the read-only record dialog) is nearly full-size by default and can be moved by dragging its header and resized via the corner grip.
+
+Table routes are built from the database schema at startup. The table name is lower-cased and stripped to `[a-z0-9_]`, so Chinook's `InvoiceLine` answers on `/api/invoiceline` and a table named `Order Details` answers on `/api/orderdetails`. Identifiers are quoted properly in the generated `SELECT`, so table names with spaces (or embedded quotes) work.
+
+Each table route supports windowed access — `offset` and `count` (query parameters, defaults `0` and `50`) select a range, and the response always carries the table's total row count:
+
+```sh
+curl 'http://localhost:8080/api/track?offset=50&count=25'
+```
+
+```json
+{ "table" : "Track", "total" : 3503, "rows" : [ { "TrackId" : 51, … }, … ] }
+```
+
+The frontend uses this to implement infinite scrolling: it keeps a sliding window of at most `3 × 50 = 150` loaded rows, prefetches the next chunk as you approach the window edge, discards rows that scrolled out of view, and re-loads them as needed when you scroll back up.
 
 ## Project layout
 

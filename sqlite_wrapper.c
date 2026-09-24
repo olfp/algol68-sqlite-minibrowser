@@ -171,3 +171,117 @@ int algol68_sqlite_close(sqlite3 *db)
 {
   return sqlite3_close(db);
 }
+
+/* Liefert das komplette Schema als JSON-Array, damit das Frontend ein
+ * ER-Diagramm zeichnen kann:
+ *   [ {"name":"Album","cols":[{"name":"AlbumId","pk":1},...],
+ *      "fks":[{"from":"ArtistId","to":"ArtistId","ref":"Artist"},...]}, ... ]
+ * Pro Tabelle: Spalten in der deklarierten Reihenfolge (PRAGMA table_info,
+ * pk ist der Primärschlüssel-Index, 0 = kein PK) und die Fremdschlüssel
+ * (PRAGMA foreign_key_list: from/to-Spalte und ref = Referenztabelle). */
+int algol68_sqlite_schema_json(sqlite3 *db,
+                               uint32_t **out, size_t *out_len)
+{
+  *out = NULL;
+  *out_len = 0;
+
+  pthread_mutex_lock(&srv_sqlite_lock);
+  json_len = 0;
+  int rc = SQLITE_OK;
+
+  static const char *qt =
+    "SELECT name FROM sqlite_master WHERE type='table' "
+    "AND name NOT LIKE 'sqlite_%' ORDER BY name;";
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(db, qt, -1, &st, NULL) != SQLITE_OK)
+    rc = sqlite3_errcode(db);
+
+  if (rc == SQLITE_OK) {
+    json_put("[");
+    int first_t = 1;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      const char *tname = (const char *)sqlite3_column_text(st, 0);
+      if (!tname) continue;
+
+      /* Tabellennamen als SQL-String-Literal quoten (Quote verdoppeln) */
+      size_t need = strlen(tname) * 2 + 3;
+      char *lit = malloc(need);
+      if (!lit) { rc = SQLITE_NOMEM; break; }
+      char *w = lit;
+      *w++ = '\'';
+      for (const unsigned char *p = (const unsigned char *)tname; *p; p++) {
+        if (*p == '\'') *w++ = '\'';
+        *w++ = (char)*p;
+      }
+      *w++ = '\'';
+      *w = '\0';
+
+      char pti[160], pfk[160];
+      snprintf(pti, sizeof pti, "PRAGMA table_info(%s)", lit);
+      snprintf(pfk, sizeof pfk, "PRAGMA foreign_key_list(%s)", lit);
+
+      if (!first_t) json_put(",");
+      first_t = 0;
+      json_put("{\"name\":");
+      json_quote(tname);
+      json_put(",\"cols\":[");
+
+      sqlite3_stmt *s2 = NULL;
+      int cfirst = 1;
+      if (sqlite3_prepare_v2(db, pti, -1, &s2, NULL) == SQLITE_OK) {
+        while (sqlite3_step(s2) == SQLITE_ROW) {
+          if (!cfirst) json_put(",");
+          cfirst = 0;
+          json_put("{\"name\":");
+          json_quote((const char *)sqlite3_column_text(s2, 1));
+          json_put(",\"pk\":");
+          char nb[16];
+          snprintf(nb, sizeof nb, "%d", sqlite3_column_int(s2, 5));
+          json_put(nb);
+          json_put("}");
+        }
+        sqlite3_finalize(s2);
+      }
+
+      json_put("],\"fks\":[");
+      sqlite3_stmt *s3 = NULL;
+      int ffirst = 1;
+      if (sqlite3_prepare_v2(db, pfk, -1, &s3, NULL) == SQLITE_OK) {
+        while (sqlite3_step(s3) == SQLITE_ROW) {
+          if (!ffirst) json_put(",");
+          ffirst = 0;
+          json_put("{\"from\":");
+          json_quote((const char *)sqlite3_column_text(s3, 3));
+          json_put(",\"to\":");
+          json_quote((const char *)sqlite3_column_text(s3, 4));
+          json_put(",\"ref\":");
+          json_quote((const char *)sqlite3_column_text(s3, 2));
+          json_put("}");
+        }
+        sqlite3_finalize(s3);
+      }
+      json_put("]}");
+      free(lit);
+    }
+    json_put("]");
+    sqlite3_finalize(st);
+  }
+
+  pthread_mutex_unlock(&srv_sqlite_lock);
+
+  size_t need = json_len + 1;
+  if (u32_cap < need) {
+    uint32_t *nu = realloc(json_u32, need * sizeof(uint32_t));
+    if (nu) {
+      json_u32 = nu;
+      u32_cap = need;
+    }
+  }
+  if (json_cur && json_u32) {
+    for (size_t i = 0; i <= json_len; i++)
+      json_u32[i] = (uint32_t)(unsigned char)json_cur[i];
+    *out = json_u32;
+    *out_len = json_len;
+  }
+  return rc;
+}

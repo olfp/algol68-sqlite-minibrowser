@@ -24,6 +24,8 @@
   𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐫𝐞𝐟 𝐬𝐪𝐥𝐢𝐭𝐞) 𝐢𝐧𝐭 sqlite_open = 𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_open";
   𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 sqlite_exec_json =
     𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_exec_json";
+  𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞) 𝐬𝐭𝐫𝐢𝐧𝐠 sqlite_schema_json =
+    𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_schema_json";
   𝐩𝐫𝐨𝐜(𝐬𝐪𝐥𝐢𝐭𝐞) 𝐢𝐧𝐭 sqlite_close = 𝐧𝐞𝐬𝐭 𝐜 "algol68_sqlite_close";
 
   { Das Unicode-Transput-Modul (transput.u68) steuert die byte-exakte
@@ -126,6 +128,82 @@
           𝐟𝐢
         𝐨𝐝;
         𝑐
+      𝐞𝐧𝐝;
+
+  { Numerischen Wert aus JSON-Text nach dem ERSTEN ':' holen. Konkret fuer
+    das Ergebnis von "SELECT COUNT(*) FROM ..." (sqlite_exec_json erzeugt
+    etwa [ { ""COUNT(*)"" : 43 } ]). Gibt den Zahlentext zurueck, leer
+    bei Fehler. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 json_value =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 json) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 p ← 1;
+        𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+        𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+          𝐢𝐟 p > 𝐮𝐩𝐛 json 𝐭𝐡𝐞𝐧
+            f ← 𝐭𝐫𝐮𝐞
+          𝐞𝐥𝐢𝐟 json[p] /= ":" 𝐭𝐡𝐞𝐧
+            p +:= 1
+          𝐞𝐥𝐬𝐞
+            f ← 𝐭𝐫𝐮𝐞
+          𝐟𝐢
+        𝐨𝐝;
+        p +:= 1;
+        𝐢𝐟 p > 𝐮𝐩𝐛 json 𝐭𝐡𝐞𝐧
+          ""
+        𝐞𝐥𝐬𝐞
+          f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 json 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐢𝐟 json[p] = " " 𝐨𝐫 json[p] = 𝐫𝐞𝐩𝐫 34 𝐭𝐡𝐞𝐧
+              p +:= 1
+            𝐞𝐥𝐬𝐞
+              f ← 𝐭𝐫𝐮𝐞
+            𝐟𝐢
+          𝐨𝐝;
+          𝐢𝐧𝐭 a ← p;
+          f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 json 𝐨𝐫 json[p] = "," 𝐨𝐫 json[p] = "}"
+              𝐨𝐫 json[p] = "]" 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐬𝐞
+              p +:= 1
+            𝐟𝐢
+          𝐨𝐝;
+          json[a : p-1]
+        𝐟𝐢
+      𝐞𝐧𝐝;
+
+  { Parameter aus der Query der Request-Zeile lesen, z.B.
+    "GET /api/album?offset=50&count=25 HTTP/1.1". Liefert den Wert von
+    name oder def, wenn der Parameter fehlt oder unlesbar ist. }
+  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 query_int =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 request, 𝐬𝐭𝐫𝐢𝐧𝐠 name, 𝐢𝐧𝐭 def) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 res ← def;
+        𝐢𝐧𝐭 q ← 𝑓𝑖𝑛𝑑𝑐(request, "?");
+        𝐢𝐧𝐭 hit ← find_sub(request, name + "=", q + 1);
+        𝐢𝐟 hit > 0 𝐭𝐡𝐞𝐧
+          𝐢𝐧𝐭 p ← hit + 𝐮𝐩𝐛 name + 1;
+          𝐬𝐭𝐫𝐢𝐧𝐠 acc ← "";
+          𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 request 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐢𝐟 request[p] ≥ "0" 𝐚𝐧𝐝 request[p] ≤ "9" 𝐭𝐡𝐞𝐧
+              acc ← acc + request[p];
+              p +:= 1
+            𝐞𝐥𝐢𝐟 acc = "" 𝐭𝐡𝐞𝐧
+              p +:= 1
+            𝐞𝐥𝐬𝐞
+              f ← 𝐭𝐫𝐮𝐞
+            𝐟𝐢
+          𝐨𝐝;
+          𝐢𝐟 acc /= "" 𝐭𝐡𝐞𝐧 res ← 𝑠2𝑖(acc) 𝐟𝐢
+        𝐟𝐢;
+        res
       𝐞𝐧𝐝;
 
   { Den idx-ten Tabellennamen aus dem sqlite_master-JSON holen, etwa
@@ -237,7 +315,7 @@
     Laufzeit aus dem Datenbank-Schema aufgebaut (sqlite_master), damit
     Gorgona mit beliebigen SQLite-Datenbanken funktioniert - siehe den
     Abschnitt "Routen aus dem Schema" im Start-Teil. }
-  𝐦𝐨𝐝𝐞 𝐫𝐨𝐮𝐭𝐞 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 𝑝𝑎𝑡ℎ, 𝐬𝐭𝐫𝐢𝐧𝐠 𝑡𝑎𝑏𝑙𝑒);
+  𝐦𝐨𝐝𝐞 𝐫𝐨𝐮𝐭𝐞 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 𝑝𝑎𝑡ℎ, 𝐬𝐭𝐫𝐢𝐧𝐠 𝑡𝑎𝑏𝑙𝑒, 𝐬𝐭𝐫𝐢𝐧𝐠 𝑡𝑜𝑡𝑎𝑙);
 
   { Gorgona DB Browser: die JSON-Routen weiter unten werden in einer kleinen
     HTML/JS-Seite visualisiert. Der Browser lebt als eigenstaendiges
@@ -297,9 +375,18 @@
   𝐟𝐨𝐫 i 𝐭𝐨 𝐮𝐩𝐛 𝑟𝑜𝑢𝑡𝑒𝑠 𝐝𝐨
     𝐬𝐭𝐫𝐢𝐧𝐠 tab ← name_at(tjson, i);
     (path 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[i]) ← path_of(tab);
-    (table 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[i]) ← tab
+    (table 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[i]) ← tab;
+    { Zeilenzahl der Tabelle, damit das Frontend die Gesamtzahl anzeigen
+      und einen Abruf-Grenzwert setzen kann }
+    (total 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[i]) ← json_value(sqlite_exec_json(db,
+      "SELECT COUNT(*) FROM " + ident(tab) + ";"))
   𝐨𝐝;
   𝑝𝑢𝑡𝑠("Routen aus dem Schema: " + 𝑤ℎ𝑜𝑙𝑒(𝐮𝐩𝐛 𝑟𝑜𝑢𝑡𝑒𝑠, 0) + " Tabellen.'n");
+
+  { Komplettes Schema als JSON einmal beim Start aufbauen (Tabellen mit
+    Spalten/Primärschlüsseln und Fremdschlüssel-Beziehungen) - dient dem
+    ER-Diagramm im Frontend. }
+  𝐬𝐭𝐫𝐢𝐧𝐠 schema_json ← sqlite_schema_json(db);
 
   𝐢𝐧𝐭 listen_fd ← socket_listen(𝑝𝑜𝑟𝑡);
   𝐢𝐟 listen_fd < 0 𝐭𝐡𝐞𝐧
@@ -348,13 +435,28 @@
             echte Angabe anzeigen kann }
           𝑏𝑜𝑑𝑦 ← "{ ""status"" : ""ok"", ""database"" : """ + db_base + """ }";
           𝑠𝑡𝑎𝑡𝑢𝑠 ← "200 OK"
+        𝐞𝐥𝐢𝐟 𝑝𝑎𝑡ℎ = "/api/schema" 𝐭𝐡𝐞𝐧
+          { Schema (Tabellen, Spalten, Primaerschluessel, Fremdschluessel)
+            als JSON fuer das ER-Diagramm }
+          𝑏𝑜𝑑𝑦 ← "{ ""tables"" : " + schema_json + " }";
+          𝑠𝑡𝑎𝑡𝑢𝑠 ← "200 OK"
         𝐞𝐥𝐬𝐞
           𝐟𝐨𝐫 𝑖 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑟𝑜𝑢𝑡𝑒𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑟𝑜𝑢𝑡𝑒𝑠 𝐝𝐨
             𝐢𝐟 𝑝𝑎𝑡ℎ 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖] = 𝑝𝑎𝑡ℎ 𝐭𝐡𝐞𝐧
-              { Select der Tabelle; Namen werden als Identifier gequotet;
-                maximal 50 Zeilen pro Antwort }
-              𝐬𝐭𝐫𝐢𝐧𝐠 𝑞 ← "SELECT * FROM " + ident(𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖]) + " LIMIT 50;";
-              𝑏𝑜𝑑𝑦 ← "{ ""table"" : """ + (𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖]) + """, ""rows"" : "
+              { Select der Tabelle; Namen werden als Identifier gequotet.
+                offset/count (optional) steuern das Abruf-Fenster des
+                Endlos-Scrollens im Browser, ohne Parameter liefert der
+                Server die ersten 50 Zeilen. }
+              𝐢𝐧𝐭 offset ← query_int(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "offset", 0);
+              𝐢𝐧𝐭 count ← query_int(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "count", 50);
+              𝐢𝐟 count < 1 𝐭𝐡𝐞𝐧 count ← 50 𝐟𝐢;
+              𝐢𝐟 count > 500 𝐭𝐡𝐞𝐧 count ← 500 𝐟𝐢;
+              𝐬𝐭𝐫𝐢𝐧𝐠 𝑞 ← "SELECT * FROM " + ident(𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                            + " LIMIT " + 𝑤ℎ𝑜𝑙𝑒(count, 0)
+                            + " OFFSET " + 𝑤ℎ𝑜𝑙𝑒(offset, 0) + ";";
+              𝑏𝑜𝑑𝑦 ← "{ ""table"" : """ + (𝑡𝑎𝑏𝑙𝑒 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                       + """, ""total"" : " + (𝑡𝑜𝑡𝑎𝑙 𝐨𝐟 𝑟𝑜𝑢𝑡𝑒𝑠[𝑖])
+                       + ", ""rows"" : "
                        + sqlite_exec_json(db, 𝑞) + " }";
               𝑠𝑡𝑎𝑡𝑢𝑠 ← "200 OK"
             𝐟𝐢

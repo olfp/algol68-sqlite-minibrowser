@@ -9,12 +9,11 @@
 <body>
 <div class="wrap">
   <h1>Gorgona DB Browser</h1>
-  <p class="sub" id="sub">served by Gorgona</p>
-  <div class="bar">
+  <p class="sub"><span id="sub">served by Gorgona</span>
+    <button id="erBtn" type="button" title="ER-Diagramm zeigen">ER-Diagramm</button></p>
+<div class="bar">
     <select id="sel"></select>
     <input id="f" placeholder="Filtern..." autocomplete="off">
-    <button id="prev" type="button">&larr;</button>
-    <button id="next" type="button">&rarr;</button>
   </div>
   <p id="status" class="status"></p>
   <div class="box">
@@ -23,7 +22,27 @@
       <tbody id="tb"></tbody>
     </table>
   </div>
-  <p class="foot">mini DB browser &middot; Filtern, Sortieren und Blaettern clientseitig &middot; max. 50 Zeilen je Tabelle (Server-LIMIT) &middot; read-only JSON-API</p>
+  <p class="foot">mini DB browser &middot; Endlos-Scrollen (Fenster von max. 150 Zeilen) &middot; Filtern clientseitig im geladenen Fenster &middot; Doppelklick auf eine Zeile zeigt den Datensatz (read-only) &middot; read-only JSON-API</p>
+</div>
+<div id="overlay" hidden>
+  <div class="dlg">
+    <h2 id="dlgTitle">Datensatz</h2>
+    <form id="dlgForm"></form>
+    <div class="dlgBar"><button id="dlgClose" type="button">Schließen</button></div>
+    <div class="resizeGrip" id="dlgGrip"></div>
+  </div>
+</div>
+<div id="er" hidden>
+  <div class="erDlg">
+    <div class="erHead">
+      <strong>ER-Diagramm</strong>
+      <span class="erHints">Entities (Tabellen) mit der Maus verschieben &middot; Positionen werden gespeichert</span>
+      <button id="erReset" type="button" title="Auf die Anfangspositionen zuruecksetzen">Reset</button>
+      <button id="erClose" type="button">Schließen</button>
+    </div>
+    <div id="erCanvas"></div>
+    <div class="resizeGrip" id="erGrip"></div>
+  </div>
 </div>
 <script src="app.js"></script>
 </body>
