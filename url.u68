@@ -1,0 +1,204 @@
+{ url.u68 - URL- und Request-Helfer fuer Gorgona.
+
+  Alles, was mit dem HTTP-Pfad und der Query einer Anfrage zu tun hat:
+  den Pfad aus der Request-Zeile ziehen (extract_path), den Pfad in
+  "/api/<db>/<rest>" zerlegen (split_db), URL-Slugs erzeugen (wsug,
+  path_of), URL-Kodierung aufloesen (pct_decode) und Query-Parameter
+  lesen (query_int, query_string). Das Modul nutzt die String-Helfer
+  aus strings.u68 und ist wie dieses reiner Quelltext; der Build
+  schiebt es hinter das oeffnende BEGIN des Hauptprogramms. Die
+  Prozedurnamen sind ASCII (unter ga68-UPPER-Stropping), die MODE
+  PATHDEF ist als Glyphe geschrieben. }
+  { Aus der Request-Zeile den URL-Pfad herauslesen, z.B.
+    "GET /api/users?x=1 HTTP/1.1" -> "/api/users". }
+
+𝐦𝐨𝐝𝐮𝐥𝐞 𝐮𝐫𝐥 = 𝐚𝐜𝐜𝐞𝐬𝐬 𝐬𝐭𝐫𝐢𝐧𝐠𝐬 𝐝𝐞𝐟
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 extract_path =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑟𝑒𝑞𝑢𝑒𝑠𝑡) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑠𝑝1 ← 𝑓𝑖𝑛𝑑𝑐(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, " ");
+        𝐬𝐭𝐫𝐢𝐧𝐠 ℎ𝑒𝑎𝑑 ← 𝑟𝑒𝑞𝑢𝑒𝑠𝑡[𝑠𝑝1+1:𝐮𝐩𝐛 𝑟𝑒𝑞𝑢𝑒𝑠𝑡];
+        𝐢𝐧𝐭 𝑠𝑝2 ← 𝑓𝑖𝑛𝑑𝑐(ℎ𝑒𝑎𝑑, " ");
+        𝐬𝐭𝐫𝐢𝐧𝐠 𝑝𝑎𝑡ℎ ← ℎ𝑒𝑎𝑑[𝐥𝐰𝐛 ℎ𝑒𝑎𝑑:𝑠𝑝2-1];
+        𝐢𝐧𝐭 𝑞 ← 𝑓𝑖𝑛𝑑𝑐(𝑝𝑎𝑡ℎ, "?");
+        𝐢𝐟 𝑞 > 0 𝐭𝐡𝐞𝐧
+          𝑝𝑎𝑡ℎ ← 𝑝𝑎𝑡ℎ[𝐥𝐰𝐛 𝑝𝑎𝑡ℎ:𝑞-1]
+        𝐟𝐢;
+        𝑝𝑎𝑡ℎ
+      𝐞𝐧𝐝;
+
+  { Request-Pfad "/api/<db>/<rest>" zerlegen; db ist der erste Abschnitt
+    nach "api", rest alles dahinter (mit fuehrendem "/"). }
+𝐩𝐮𝐛 𝐦𝐨𝐝𝐞 𝐩𝐚𝐭𝐡𝐝𝐞𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 dseg, 𝐬𝐭𝐫𝐢𝐧𝐠 drest);
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐫𝐞𝐟 𝐩𝐚𝐭𝐡𝐝𝐞𝐟) 𝐯𝐨𝐢𝐝 split_db =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 p, 𝐫𝐞𝐟 𝐩𝐚𝐭𝐡𝐝𝐞𝐟 d) 𝐯𝐨𝐢𝐝:
+      𝐛𝐞𝐠𝐢𝐧
+        dseg 𝐨𝐟 d ← "";
+        drest 𝐨𝐟 d ← "";
+        𝐢𝐧𝐭 pl ← 𝐥𝐰𝐛 p, pu ← 𝐮𝐩𝐛 p;
+        { Laenge zuerst pruefen (AND ist nicht kurzsicher) }
+        𝐢𝐟 pl ≤ pu 𝐚𝐧𝐝 pu - pl ≥ 4 𝐭𝐡𝐞𝐧
+          𝐢𝐟 p[pl:pl+4] = "/api/" 𝐭𝐡𝐞𝐧
+            𝐢𝐧𝐭 a ← pl + 5;
+            𝐢𝐧𝐭 cut ← 0;
+            𝐛𝐨𝐨𝐥 sc ← 𝐭𝐫𝐮𝐞;
+            𝐢𝐧𝐭 k ← a;
+            𝐰𝐡𝐢𝐥𝐞 sc 𝐝𝐨
+              𝐢𝐟 k > pu 𝐭𝐡𝐞𝐧
+                sc ← 𝐟𝐚𝐥𝐬𝐞
+              𝐞𝐥𝐢𝐟 p[k] = "/" 𝐭𝐡𝐞𝐧
+                cut ← k;
+                sc ← 𝐟𝐚𝐥𝐬𝐞
+              𝐞𝐥𝐬𝐞
+                k ← k + 1
+              𝐟𝐢
+            𝐨𝐝;
+            𝐢𝐟 cut = 0 𝐭𝐡𝐞𝐧
+              𝐢𝐟 a ≤ pu 𝐭𝐡𝐞𝐧 dseg 𝐨𝐟 d ← p[a:pu] 𝐟𝐢
+            𝐞𝐥𝐬𝐞
+              𝐢𝐟 a ≤ cut - 1 𝐭𝐡𝐞𝐧 dseg 𝐨𝐟 d ← p[a:cut-1] 𝐟𝐢;
+              drest 𝐨𝐟 d ← p[cut:pu]
+            𝐟𝐢
+          𝐟𝐢
+        𝐟𝐢
+      𝐞𝐧𝐝;
+
+  { URL-Kennung fuer einen Namen: Grossbuchstaben werden zu Kleinbuchstaben,
+    alles ausser [a-z0-9_] wird weggelassen ("My DB" → "mydb"). Gleiche
+    Regel wie bei den Tabellen-Slugs, damit Client- und Server-Pfade
+    uebereinstimmen. }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 wsug =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 name) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 out ← "";
+        𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 name 𝐭𝐨 𝐮𝐩𝐛 name 𝐝𝐨
+          𝐜𝐡𝐚𝐫 c ← name[k];
+          𝐢𝐟 (c ≥ "a" 𝐚𝐧𝐝 c ≤ "z") 𝐨𝐫 (c ≥ "0" 𝐚𝐧𝐝 c ≤ "9") 𝐨𝐫 c = "_" 𝐭𝐡𝐞𝐧
+            out ← out + c
+          𝐞𝐥𝐢𝐟 c ≥ "A" 𝐚𝐧𝐝 c ≤ "Z" 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫(𝐚𝐛𝐬 c + 32)
+          𝐟𝐢
+        𝐨𝐝;
+        out
+      𝐞𝐧𝐝;
+
+  { URL-tauglichen Pfad aus einem Tabellennamen machen: Grossbuchstaben
+    werden zu Kleinbuchstaben, alles ausser [a-z0-9_] wird weggelassen
+    ("Invoice Line" wird zu "invoiceline"), davor steht "/api/". }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 path_of =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 name) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 out ← "";
+        𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 name 𝐭𝐨 𝐮𝐩𝐛 name 𝐝𝐨
+          𝐜𝐡𝐚𝐫 c ← name[k];
+          𝐢𝐟 (c ≥ "a" 𝐚𝐧𝐝 c ≤ "z") 𝐨𝐫 (c ≥ "0" 𝐚𝐧𝐝 c ≤ "9") 𝐨𝐫 c = "_" 𝐭𝐡𝐞𝐧
+            out ← out + c
+          𝐞𝐥𝐢𝐟 c ≥ "A" 𝐚𝐧𝐝 c ≤ "Z" 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫(𝐚𝐛𝐬 c + 32)
+          𝐟𝐢
+        𝐨𝐝;
+        "/api/" + out
+      𝐞𝐧𝐝;
+
+  { URL-Kodierung aufloesen: "%XX" wird zum Byte, "+" zum Leerzeichen.
+    Notwendig, damit Fremdschluessel-Werte mit Sonderzeichen (Leerzeichen,
+    "&", "=") als SQL-Literal verwendbar sind. }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 pct_decode =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 s) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 out ← "";
+        𝐢𝐧𝐭 p ← 𝐥𝐰𝐛 s;
+        𝐰𝐡𝐢𝐥𝐞 p ≤ 𝐮𝐩𝐛 s 𝐝𝐨
+          𝐢𝐟 s[p] = "%" 𝐚𝐧𝐝 p + 2 ≤ 𝐮𝐩𝐛 s 𝐭𝐡𝐞𝐧
+            { Kein Short-Circuit: BEDINGUNG selbst prüfen, dann beide
+              Hex-Ziffern getrennt auswerten }
+            𝐢𝐧𝐭 vh ← -1; 𝐢𝐧𝐭 vl ← -1;
+            𝐢𝐟 s[p+1] ≥ "0" 𝐚𝐧𝐝 s[p+1] ≤ "9" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "0"
+            𝐞𝐥𝐢𝐟 s[p+1] ≥ "a" 𝐚𝐧𝐝 s[p+1] ≤ "f" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "a" + 10
+            𝐞𝐥𝐢𝐟 s[p+1] ≥ "A" 𝐚𝐧𝐝 s[p+1] ≤ "F" 𝐭𝐡𝐞𝐧
+              vh ← 𝐚𝐛𝐬 s[p+1] - 𝐚𝐛𝐬 "A" + 10
+            𝐟𝐢;
+            𝐢𝐟 s[p+2] ≥ "0" 𝐚𝐧𝐝 s[p+2] ≤ "9" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "0"
+            𝐞𝐥𝐢𝐟 s[p+2] ≥ "a" 𝐚𝐧𝐝 s[p+2] ≤ "f" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "a" + 10
+            𝐞𝐥𝐢𝐟 s[p+2] ≥ "A" 𝐚𝐧𝐝 s[p+2] ≤ "F" 𝐭𝐡𝐞𝐧
+              vl ← 𝐚𝐛𝐬 s[p+2] - 𝐚𝐛𝐬 "A" + 10
+            𝐟𝐢;
+            𝐢𝐟 vh ≥ 0 𝐚𝐧𝐝 vl ≥ 0 𝐭𝐡𝐞𝐧
+              out ← out + 𝐫𝐞𝐩𝐫 (vh * 16 + vl);
+              p +:= 2
+            𝐞𝐥𝐬𝐞
+              out ← out + s[p]
+            𝐟𝐢
+          𝐞𝐥𝐢𝐟 s[p] = "+" 𝐭𝐡𝐞𝐧
+            out ← out + " "
+          𝐞𝐥𝐬𝐞
+            out ← out + s[p]
+          𝐟𝐢;
+          p +:= 1
+        𝐨𝐝;
+        out
+      𝐞𝐧𝐝;
+
+  { Parameter aus der Query der Request-Zeile lesen, z.B.
+    "GET /api/album?offset=50&count=25 HTTP/1.1". Liefert den Wert von
+    name oder def, wenn der Parameter fehlt oder unlesbar ist. }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 query_int =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 request, 𝐬𝐭𝐫𝐢𝐧𝐠 name, 𝐢𝐧𝐭 def) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 res ← def;
+        𝐢𝐧𝐭 q ← 𝑓𝑖𝑛𝑑𝑐(request, "?");
+        𝐢𝐧𝐭 hit ← find_sub(request, name + "=", q + 1);
+        𝐢𝐟 hit > 0 𝐭𝐡𝐞𝐧
+          𝐢𝐧𝐭 p ← hit + 𝐮𝐩𝐛 name + 1;
+          𝐬𝐭𝐫𝐢𝐧𝐠 acc ← "";
+          𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 request 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐢𝐟 request[p] ≥ "0" 𝐚𝐧𝐝 request[p] ≤ "9" 𝐭𝐡𝐞𝐧
+              acc ← acc + request[p];
+              p +:= 1
+            𝐞𝐥𝐢𝐟 acc = "" 𝐭𝐡𝐞𝐧
+              p +:= 1
+            𝐞𝐥𝐬𝐞
+              f ← 𝐭𝐫𝐮𝐞
+            𝐟𝐢
+          𝐨𝐝;
+          𝐢𝐟 acc /= "" 𝐭𝐡𝐞𝐧 res ← 𝑠2𝑖(acc) 𝐟𝐢
+        𝐟𝐢;
+        res
+      𝐞𝐧𝐝;
+
+  { String-Parameter einer Anfrage lesen (bis "&" oder Ende). Der Wert ist
+    noch URL-kodiert (siehe pct_decode weiter unten). "?fcol=A&fval=5" }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 query_string =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 request, 𝐬𝐭𝐫𝐢𝐧𝐠 name, 𝐬𝐭𝐫𝐢𝐧𝐠 def) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 res ← def;
+        𝐢𝐧𝐭 q ← 𝑓𝑖𝑛𝑑𝑐(request, "?");
+        𝐢𝐧𝐭 hit ← find_sub(request, name + "=", q + 1);
+        𝐢𝐟 hit > 0 𝐭𝐡𝐞𝐧
+          𝐢𝐧𝐭 p ← hit + 𝐮𝐩𝐛 name + 1;
+          𝐬𝐭𝐫𝐢𝐧𝐠 acc ← "";
+          𝐛𝐨𝐨𝐥 f ← 𝐟𝐚𝐥𝐬𝐞;
+          𝐰𝐡𝐢𝐥𝐞 𝐧𝐨𝐭 f 𝐝𝐨
+            𝐢𝐟 p > 𝐮𝐩𝐛 request 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐢𝐟 request[p] = "&" 𝐨𝐫 request[p] = " " 𝐨𝐫 request[p] = 𝐫𝐞𝐩𝐫 13 𝐭𝐡𝐞𝐧
+              f ← 𝐭𝐫𝐮𝐞
+            𝐞𝐥𝐬𝐞
+              acc ← acc + request[p];
+              p +:= 1
+            𝐟𝐢
+          𝐨𝐝;
+          𝐢𝐟 acc /= "" 𝐭𝐡𝐞𝐧 res ← acc 𝐟𝐢
+        𝐟𝐢;
+        res
+      𝐞𝐧𝐝;
+
+𝐬𝐤𝐢𝐩
+𝐟𝐞𝐝;

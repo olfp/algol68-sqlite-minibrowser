@@ -6,34 +6,41 @@ CFLAGS   = -O2 -pthread
 
 # --- Projekt-Struktur ---
 TARGET   = gorgona
-# Das Hauptprogramm (wird über die Musterregel aus gorgona.u68 erzeugt)
+# Das Hauptprogramm (Particular Program mit ACCESS-Klausel; wird ueber die
+# Musterregel aus gorgona.u68 erzeugt)
 MAIN     = gorgona.a68
-# Das Unicode-Transput-Modul (Deklarationen, wird hinter das BEGIN
-# des Hauptprogramms eingefügt, damit der Stock-ga68 keine Modul-Units
-# braucht) - und der minimale C-Kern dafür (roh lesen/schreiben, byte-exakt)
-TRANSMOD = transput.u68
-TRANSMOD_A = transput.a68
-JOINED   = gorgona-joined.a68
-TRANS    = transput_wrapper.c
-WRAPPER  = sock_wrapper.c
-THREAD   = thread_wrapper.c
-SQLITE   = sqlite_wrapper.c
-TRANS_O  = transput_wrapper.o
-WRAP_OBJ = sock_wrapper.o
-THREAD_O = thread_wrapper.o
-SQLITE_O = sqlite_wrapper.o
+# Die Definition-Module in der Reihenfolge fuer den Link (transio zuerst,
+# dann strings, dann url: url greift per ACCESS STRINGS auf strings zu.
+# Jedes Modul wird separat mit "ga68 -c" gebaut; der Objektname entspricht
+# dann automatisch dem lowercase Modul-Indikant: transio.o, strings.o,
+# url.o - so findet das ACCESS die Exports wieder.
+MODULES   = transio.a68 strings.a68 url.a68
+# Der minimale C-Kern fuer byte-exakte Ein-/Ausgabe (roh lesen/schreiben)
+TRANS     = transput_wrapper.c
+WRAPPER   = sock_wrapper.c
+THREAD    = thread_wrapper.c
+SQLITE    = sqlite_wrapper.c
+TRANS_O   = transput_wrapper.o
+WRAP_OBJ  = sock_wrapper.o
+THREAD_O  = thread_wrapper.o
+SQLITE_O  = sqlite_wrapper.o
 
 all: $(TARGET)
+
+# Die u682a68-Ausgaben nicht als Make-Intermediates automatisch loeschen
+.SECONDARY: $(MAIN) $(MODULES)
 
 # Allgemeine Musterregel: Wandelt JEDE .u68 in eine .a68 um
 %.a68: %.u68
 	u682a68 < $< > $@
 
-# Das Transput-Modul hinter das öffnende BEGIN des Hauptprogramms schieben:
-# Zeile 1 des Hauptprogramms ist "BEGIN", direkt danach folgen die
-# Modul-Deklarationen, damit sie vor allen Verwendungen gelten.
-$(JOINED): $(MAIN) $(TRANSMOD_A)
-	awk 'NR==1 && /^BEGIN$$/ {print; while ((getline line < "$(TRANSMOD_A)") > 0) print line; close("$(TRANSMOD_A)"); next} {print}' $(MAIN) > $@
+# Jedes Algol-Modul separat kompilieren (legt gleich <name>.o an)
+%.o: %.a68
+	$(A68C) $(A68FLAGS) -c $<
+
+# Das Hauptprogramm braucht beim Kompilieren die Exports der Module,
+# deshalb haengt gorgona.o an den Modul-Objekten
+gorgona.o: $(MAIN) $(MODULES:.a68=.o)
 
 # Die C-Wrapper in .o-Objekte kompilieren
 $(TRANS_O): $(TRANS)
@@ -48,9 +55,9 @@ $(THREAD_O): $(THREAD)
 $(SQLITE_O): $(SQLITE)
 	$(CC) $(CFLAGS) -c $(SQLITE) -o $(SQLITE_O)
 
-# Das Algol-Hauptprogramm zusammen mit den C-Objekten linken
-$(TARGET): $(JOINED) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O)
-	$(A68C) $(A68FLAGS) $(JOINED) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O) -lsqlite3 -pthread -o $(TARGET)
+# Das Algol-Hauptprogramm zusammen mit den Modulen und C-Objekten linken
+$(TARGET): gorgona.o $(MODULES:.a68=.o) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O)
+	$(A68C) $(A68FLAGS) gorgona.o $(MODULES:.a68=.o) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O) -lsqlite3 -pthread -o $(TARGET)
 
 .PHONY: all clean run
 
@@ -58,5 +65,4 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O) config_wrapper.o *.a68
-
+	rm -f $(TARGET) gorgona.o $(MODULES:.a68=.o) $(TRANS_O) $(WRAP_OBJ) $(THREAD_O) $(SQLITE_O) *.a68

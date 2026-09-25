@@ -191,6 +191,8 @@ static int sch_find_idx(sqlite3 *db, const char *name)
   return -1;
 }
 
+static void quo_ident(sqlite3_str *sb, const char *name);
+
 /* Tabelle (Spalten + FKs) laden, wenn noetig; Rueckgabe: Index im Cache,
    -1 wenn die Tabelle nicht existiert. Nur innerhalb des Mutex aufrufen! */
 static int sch_load(sqlite3 *db, const char *name)
@@ -211,7 +213,11 @@ static int sch_load(sqlite3 *db, const char *name)
   int ncols = 0, nfks = 0;
   SchCol *cols = NULL; SchFk *fks = NULL;
   sqlite3_stmt *st = NULL;
-  char *q = sqlite3_mprintf("PRAGMA table_info(%w);", name);
+  sqlite3_str *qsb = sqlite3_str_new(NULL);
+  sqlite3_str_appendall(qsb, "PRAGMA table_info(");
+  quo_ident(qsb, name);
+  sqlite3_str_appendall(qsb, ");");
+  char *q = sqlite3_str_finish(qsb);
   if (q && sqlite3_prepare_v2(db, q, -1, &st, NULL) == SQLITE_OK) {
     while (sqlite3_step(st) == SQLITE_ROW) {
       cols = realloc(cols, (size_t)(ncols + 1) * sizeof(SchCol));
@@ -222,7 +228,11 @@ static int sch_load(sqlite3 *db, const char *name)
     sqlite3_finalize(st);
   }
   sqlite3_free(q);
-  q = sqlite3_mprintf("PRAGMA foreign_key_list(%w);", name);
+  qsb = sqlite3_str_new(NULL);
+  sqlite3_str_appendall(qsb, "PRAGMA foreign_key_list(");
+  quo_ident(qsb, name);
+  sqlite3_str_appendall(qsb, ");");
+  q = sqlite3_str_finish(qsb);
   if (q && sqlite3_prepare_v2(db, q, -1, &st, NULL) == SQLITE_OK) {
     while (sqlite3_step(st) == SQLITE_ROW) {
       fks = realloc(fks, (size_t)(nfks + 1) * sizeof(SchFk));
@@ -246,11 +256,20 @@ static int sch_load(sqlite3 *db, const char *name)
   return i;
 }
 
+static void quo_ident(sqlite3_str *sb, const char *name)
+{
+  sqlite3_str_appendchar(sb, 1, '"');
+  for (const unsigned char *p = (const unsigned char *)(name ? name : ""); *p; p++) {
+    if (*p == '"') sqlite3_str_appendchar(sb, 1, '"');
+    sqlite3_str_appendchar(sb, 1, (char)*p);
+  }
+  sqlite3_str_appendchar(sb, 1, '"');
+}
+
 static void sb_ident(sqlite3_str *sb, const char *name)
 {
-  char *qn = sqlite3_mprintf("%w", name);
-  sqlite3_str_appendall(sb, qn ? qn : "\"\"");
-  sqlite3_free(qn);
+  if (!name) { sqlite3_str_appendall(sb, "\"\""); return; }
+  quo_ident(sb, name);
 }
 
 /* Fuehrt die Abfrage aus und liefert das Ergebnis als JSON-Array von
@@ -393,6 +412,8 @@ int algol68_sqlite_table_rows(sqlite3 *db,
         json_put("]");
         if (sr != SQLITE_DONE) rc = sr;
         sqlite3_finalize(stmt);
+      } else {
+        fprintf(stderr, "Gorgona rows: %s (SQL: %s)\n", sqlite3_errmsg(db), sql);
       }
       sqlite3_free(sql);
     }

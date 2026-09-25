@@ -16,31 +16,34 @@
      "KEY = VALUE"-Zeilen mit "#"-Kommentaren - komplett in Algol 68,
      das C beschraenkt sich auf die zwei Rohteil-Primitive oben.
 
-  Das Modul ist reiner Quelltext (Deklarationen); der Build schiebt es
-  hinter das oeffnende BEGIN des Hauptprogramms. Alle Prozeduren heissen
-  ASCII, damit sie auch unter ga68-UPPER-Stropping eindeutig sind. }
+  Das Modul ist ein ga68-DEFINITION-Modul (MODULE TRANSIO); das
+  Hauptprogramm holt es sich ueber ACCESS TRANSIO. Alle Prozeduren
+  heissen ASCII, damit sie auch unter ga68-UPPER-Stropping eindeutig
+  sind. }
 
 { Datei roh und komplett lesen (1 Byte je Zeichenzelle);
   bei Fehler leerer String. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 read_file = 𝐧𝐞𝐬𝐭 𝐜 "algol68_read_file";
+
+𝐦𝐨𝐝𝐮𝐥𝐞 𝐭𝐫𝐚𝐧𝐬𝐢𝐨 = 𝐝𝐞𝐟
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 read_file = 𝐧𝐞𝐬𝐭 𝐜 "algol68_read_file";
 
 { Zeichenkette byte-genau auf einen Descriptor schreiben
   (Niedrigwert-Byte je Zelle, volle Laenge). }
-  𝐩𝐫𝐨𝐜(𝐢𝐧𝐭, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_all = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_all";
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐢𝐧𝐭, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_all = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_all";
 
 { Zeichenkette byte-genau in eine Datei schreiben (komplett ersetzt,
   atomar ueber "<pfad>.tmp" + rename). Rueckgabe: 0 = ok, sonst < 0. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_text = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_file";
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_text = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_file";
 
 { --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare) --- }
-  𝐦𝐨𝐝𝐞 𝐤𝐨𝐧𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐬𝐭𝐫𝐢𝐧𝐠 val);
-  [1:16] 𝐤𝐨𝐧𝐟 cfg;
-  𝐢𝐧𝐭 cfg_n ← 0;
+𝐩𝐮𝐛 𝐦𝐨𝐝𝐞 𝐤𝐨𝐧𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐬𝐭𝐫𝐢𝐧𝐠 val);
+𝐩𝐮𝐛 [1:16] 𝐤𝐨𝐧𝐟 cfg;
+𝐩𝐮𝐛 𝐢𝐧𝐭 cfg_n ← 0;
 
 { Fuehrende und abschliessende Blank-, Tabulator- und Wagenruecklauf-
     Zeichen abschneiden. (Achtung: AND/OR sind NICHT kurzsicher - der
     Index wird deshalb nie zusammen mit der Grenzpruefung ausgewertet.) }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 tstr =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 tstr =
     (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐬𝐭𝐫𝐢𝐧𝐠:
       𝐛𝐞𝐠𝐢𝐧
         𝐢𝐧𝐭 a ← 𝐥𝐰𝐛 𝑠, z ← 𝐮𝐩𝐛 𝑠;
@@ -68,7 +71,7 @@
       𝐞𝐧𝐝;
 
 { Position des ersten "=" in s; 0 wenn keins enthalten ist. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 findeq =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 findeq =
     (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐢𝐧𝐭:
       𝐛𝐞𝐠𝐢𝐧
         𝐢𝐧𝐭 𝑟 ← 0;
@@ -80,7 +83,7 @@
 
 { Ganzzahl aus einer Dezimalzeichenkette; bei nicht-numerischem Inhalt
   der uebergebene Default. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 c2i =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 c2i =
     (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠, 𝐢𝐧𝐭 default) 𝐢𝐧𝐭:
       𝐛𝐞𝐠𝐢𝐧
         𝐢𝐧𝐭 a ← 𝐥𝐰𝐛 𝑠, sign ← 1, 𝑣 ← 0;
@@ -121,7 +124,7 @@
 
 { gorgona.conf einlesen und auswerten.
   Rueckgabe: 0 = ok, -1 = Datei fehlt/unlesbar (leerer String). }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 config_load =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 config_load =
     (𝐬𝐭𝐫𝐢𝐧𝐠 path) 𝐢𝐧𝐭:
       𝐛𝐞𝐠𝐢𝐧
         𝐬𝐭𝐫𝐢𝐧𝐠 text ← read_file(path);
@@ -169,7 +172,7 @@
       𝐞𝐧𝐝;
 
 { Wert des Schluessels; leerer String wenn nicht vorhanden. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 config_string =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 config_string =
     (𝐬𝐭𝐫𝐢𝐧𝐠 key) 𝐬𝐭𝐫𝐢𝐧𝐠:
       𝐛𝐞𝐠𝐢𝐧
         𝐬𝐭𝐫𝐢𝐧𝐠 r ← "";
@@ -180,9 +183,12 @@
       𝐞𝐧𝐝;
 
 { Ganzzahlwert des Schluessels; Default wenn fehlend oder ungueltig. }
-  𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 config_int =
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 config_int =
     (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐢𝐧𝐭 default) 𝐢𝐧𝐭:
       𝐛𝐞𝐠𝐢𝐧
         𝐬𝐭𝐫𝐢𝐧𝐠 v ← config_string(key);
         𝐢𝐟 v /= "" 𝐭𝐡𝐞𝐧 c2i(v, default) 𝐞𝐥𝐬𝐞 default 𝐟𝐢
       𝐞𝐧𝐝;
+
+𝐬𝐤𝐢𝐩
+𝐟𝐞𝐝;

@@ -1,0 +1,92 @@
+{ strings.u68 - String-Helfer fuer Gorgona.
+
+  Kleine, allgemeine Zeichenketten-Werkzeuge, die der Server an vielen
+  Stellen braucht: Konvertierung (s2i), Suche (findc, find_sub), Haeufig-
+  keitszaehlung (find_count) und das Escapen von Zeichenketten fuer JSON
+  (jq). Das Modul ist reiner Quelltext (Deklarationen); der Build schiebt
+  Es ist ein ga68-DEFINITION-Modul (MODULE STRINGS); das Hauptprogramm
+  holt es sich ueber ACCESS STRINGS. Die Prozedurnamen sind ASCII, damit
+  sie unter ga68-UPPER-Stropping eindeutig sind. }
+{ String, der nur Ziffern enthaelt, in int verwandeln }
+
+𝐦𝐨𝐝𝐮𝐥𝐞 𝐬𝐭𝐫𝐢𝐧𝐠𝐬 = 𝐝𝐞𝐟
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 𝑠2𝑖 =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑣 ← 0;
+        𝐟𝐨𝐫 𝑖 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑠 𝐝𝐨
+          𝑣 ← 𝑣 * 10 + (𝐚𝐛𝐬 𝑠[𝑖] - 𝐚𝐛𝐬 "0")
+        𝐨𝐝;
+        𝑣
+      𝐞𝐧𝐝;
+
+  { Position des ersten Auftretens von c in s; 0 wenn nicht enthalten }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐜𝐡𝐚𝐫) 𝐢𝐧𝐭 𝑓𝑖𝑛𝑑𝑐 =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠, 𝐜𝐡𝐚𝐫 𝑐) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑟 ← 0;
+        𝐟𝐨𝐫 𝑘 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑠 𝐰𝐡𝐢𝐥𝐞 𝑟 = 0 𝐝𝐨
+          𝐢𝐟 𝑠[𝑘] = 𝑐 𝐭𝐡𝐞𝐧 𝑟 ← 𝑘 𝐟𝐢
+        𝐨𝐝;
+        𝑟
+      𝐞𝐧𝐝;
+
+  { Substring ndl ab der Position vfrom in hay suchen; 0 wenn nicht
+    enthalten. }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠, 𝐢𝐧𝐭) 𝐢𝐧𝐭 find_sub =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 hay, 𝐬𝐭𝐫𝐢𝐧𝐠 ndl, 𝐢𝐧𝐭 vfrom) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑟 ← 0;
+        𝐢𝐧𝐭 n ← 𝐮𝐩𝐛 ndl;
+        𝐢𝐟 vfrom ≥ 1 𝐚𝐧𝐝 n ≤ 𝐮𝐩𝐛 hay - vfrom + 1 𝐭𝐡𝐞𝐧
+          𝐢𝐧𝐭 i ← vfrom;
+          𝐰𝐡𝐢𝐥𝐞 i ≤ 𝐮𝐩𝐛 hay - n + 1 𝐚𝐧𝐝 𝑟 = 0 𝐝𝐨
+            𝐢𝐟 hay[i : i+n-1] = ndl 𝐭𝐡𝐞𝐧 𝑟 ← i 𝐟𝐢;
+            i ← i + 1
+          𝐨𝐝
+        𝐟𝐢;
+        𝑟
+      𝐞𝐧𝐝;
+
+  { Anzahl der Vorkommen von ndl in s }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 find_count =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 s, 𝐬𝐭𝐫𝐢𝐧𝐠 ndl) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑐 ← 0, 𝑝 ← 1;
+        𝐰𝐡𝐢𝐥𝐞 𝑝 > 0 𝐝𝐨
+          𝑝 ← find_sub(s, ndl, 𝑝);
+          𝐢𝐟 𝑝 > 0 𝐭𝐡𝐞𝐧
+            𝑐 ← 𝑐 + 1;
+            𝑝 ← 𝑝 + 𝐮𝐩𝐛 ndl
+          𝐟𝐢
+        𝐨𝐝;
+        𝑐
+      𝐞𝐧𝐝;
+
+  { Einen String als JSON-Literal ausgeben: Anfuehrungszeichen, Backslash,
+    Zeilenumbruch, Wagenruecklauf und Tabulator escapen. }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐬𝐭𝐫𝐢𝐧𝐠 jq =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 s) 𝐬𝐭𝐫𝐢𝐧𝐠:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐬𝐭𝐫𝐢𝐧𝐠 out ← 𝐫𝐞𝐩𝐫 34;
+        𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 s 𝐭𝐨 𝐮𝐩𝐛 s 𝐝𝐨
+          𝐜𝐡𝐚𝐫 c ← s[k];
+          𝐢𝐟 c = 𝐫𝐞𝐩𝐫 92 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫 92 + 𝐫𝐞𝐩𝐫 92
+          𝐞𝐥𝐢𝐟 c = 𝐫𝐞𝐩𝐫 34 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫 92 + 𝐫𝐞𝐩𝐫 34
+          𝐞𝐥𝐢𝐟 c = "'n" 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫 92 + "n"
+          𝐞𝐥𝐢𝐟 c = 𝐫𝐞𝐩𝐫 13 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫 92 + "r"
+          𝐞𝐥𝐢𝐟 c = 𝐫𝐞𝐩𝐫 9 𝐭𝐡𝐞𝐧
+            out ← out + 𝐫𝐞𝐩𝐫 92 + "t"
+          𝐞𝐥𝐬𝐞
+            out ← out + c
+          𝐟𝐢
+        𝐨𝐝;
+        out + 𝐫𝐞𝐩𝐫 34
+      𝐞𝐧𝐝;
+
+𝐬𝐤𝐢𝐩
+𝐟𝐞𝐝;
