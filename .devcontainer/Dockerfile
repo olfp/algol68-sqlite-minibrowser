@@ -1,14 +1,23 @@
 # 1. Start from the Microsoft provided Ubuntu 26.04 base image
-FROM ://microsoft.com
+FROM ubuntu:26.04
 
 # 2. Suppress interactive installation menus 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 3. Update repositories and install ga68 alongside Python 3 
+# Installieren Sie grundlegende Tools, die für die Arbeit im Terminal nützlich sind
 RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    wget \
+    build-essential
+
+# 3. install ga68 alongside Python 3 
+RUN apt-get install -y \
     ga68-16-x86-64-linux-gnu \
     python3 \
     python3-pip \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # 3a. CREATE SYMLINK: Maps 'ga68' to the actual installed compiler binary
@@ -20,3 +29,16 @@ COPY u682a68 /usr/local/bin/u682a68
 
 # 5. Provide execution permissions to your python script
 RUN chmod +x /usr/local/bin/u682a68
+
+# Erstellen Sie einen non-root Benutzer "vscode" (Standard für Codespaces) mit sudo-Rechten
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+# Wechseln Sie standardmäßig auf den neuen Benutzer
+USER $USERNAME
