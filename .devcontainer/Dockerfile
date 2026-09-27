@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     git \
     sudo \
     wget \
+    sqlite3 \
+    libsqlite3-dev \
     build-essential
 
 # 3. install ga68 alongside Python 3 
