@@ -30,6 +30,10 @@ RUN ln -s /usr/bin/x86_64-linux-gnu-ga68-16 /usr/bin/ga68
 # 5. Provide execution permissions to your python script
 #RUN chmod +x /usr/local/bin/u682a68
 
+# WICHTIG: Entfernt den standardmäßigen Ubuntu-User, um UID/GID 1000 freizugeben
+RUN if id -u ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi \
+    && if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi
+
 # Erstellen Sie einen non-root Benutzer "vscode" (Standard für Codespaces) mit sudo-Rechten
 ARG USERNAME=vscode
 ARG USER_UID=1000
