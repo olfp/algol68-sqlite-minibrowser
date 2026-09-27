@@ -24,12 +24,6 @@ RUN apt-get install -y \
 RUN ln -s /usr/bin/x86_64-linux-gnu-ga68-16 /usr/bin/ga68-16
 RUN ln -s /usr/bin/x86_64-linux-gnu-ga68-16 /usr/bin/ga68
 
-# 4. Inject your custom script into the global system path
-COPY u682a68 /usr/local/bin/u682a68
-
-# 5. Provide execution permissions to your python script
-RUN chmod +x /usr/local/bin/u682a68
-
 # WICHTIG: Entfernt den standardmäßigen Ubuntu-User, um UID/GID 1000 freizugeben
 RUN if id -u ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi \
     && if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi
