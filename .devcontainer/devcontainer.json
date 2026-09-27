@@ -1,0 +1,6 @@
+{
+  "name": "Algol68 Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile"
+  }
+}
