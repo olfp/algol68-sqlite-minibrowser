@@ -32,7 +32,7 @@ all: $(TARGET)
 
 # Allgemeine Musterregel: Wandelt JEDE .u68 in eine .a68 um
 %.a68: %.u68
-	u682a68 < $< > $@
+	python3 u682a68 < $< > $@
 
 # Jedes Algol-Modul separat kompilieren (legt gleich <name>.o an)
 %.o: %.a68
