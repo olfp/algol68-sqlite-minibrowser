@@ -1,5 +1,5 @@
-# 1. Start from the official Ubuntu 26.04 base image
-FROM ubuntu:26.04
+# 1. Start from the Microsoft provided Ubuntu 26.04 base image
+FROM ://microsoft.com
 
 # 2. Suppress interactive installation menus 
 ENV DEBIAN_FRONTEND=noninteractive
