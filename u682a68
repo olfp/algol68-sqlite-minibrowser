@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+
+def build_back_maps():
+    """Erstellt die inversen Maps, um Unicode Math Glyphen zurück zu ASCII-UPPER zu wandeln."""
+    back_bold_map = {}
+    back_italic_map = {}
+
+    # 1. Rückabbildung von Math-Bold (Keywords) -> ASCII GROSSBUCHSTABEN
+    for i in range(26):
+        back_bold_map[chr(0x1D41A + i)] = chr(ord('A') + i)  # 𝐚 -> A
+        back_bold_map[chr(0x1D400 + i)] = chr(ord('A') + i)  # 𝐀 -> A
+    for i in range(10):
+        back_bold_map[chr(0x1D7CE + i)] = chr(ord('0') + i)  # 𝟎 -> 0
+
+    # 2. Rückabbildung von Math-Italic (Variablen) -> Normales ASCII (behält Case)
+    for i in range(26):
+        back_italic_map[chr(0x1D44E + i)] = chr(ord('a') + i)  # 𝑎 -> a
+        back_italic_map[chr(0x1D434 + i)] = chr(ord('A') + i)  # 𝐴 -> A
+    
+    # Sonderregel für das kursive 'h' (Planck-Konstante)
+    back_italic_map[chr(0x210E)] = 'h'
+
+    # 3. Mathematische Operatoren zurück zu ASCII-UPPER Operatoren expandieren
+    operator_back_map = {
+        "≤": "<=",
+        "≥": ">=",
+        "≠": "/=",
+        "¬": " NOT ",
+        "∧": " AND ",
+        "∨": " OR ",
+        "←": ":="
+    }
+
+    return back_bold_map, back_italic_map, operator_back_map
+
+def convert_unicode_to_upper_strop_safe(code_text, back_bold_map, back_italic_map, operator_back_map):
+    """Übersetzt den Code zeichenweise und schützt Strings/Kommentare absolut stabil."""
+    reconstructed = []
+    
+    in_string = False
+    in_curly_comment = False
+    in_hash_comment = False
+    
+    # Wir konvertieren den Text in eine Liste einzelner Zeichen (Grapheme)
+    chars = list(code_text)
+    length = len(chars)
+    i = 0
+    
+    while i < length:
+        c = chars[i]
+        
+        # --- ZUSTANDSMASCHINE FÜR LITERALE & KOMMENTARE ---
+        # 1. String-Schutz ("...")
+        if c == '"' and not in_curly_comment and not in_hash_comment:
+            in_string = not in_string
+            reconstructed.append(c)
+            i += 1
+            continue
+            
+        # 2. Kommentar-Schutz für geschweifte Klammern ({...})
+        if c == '{' and not in_string and not in_hash_comment:
+            in_curly_comment = True
+            reconstructed.append(c)
+            i += 1
+            continue
+        if c == '}' and in_curly_comment:
+            in_curly_comment = False
+            reconstructed.append(c)
+            i += 1
+            continue
+            
+        # 3. Kommentar-Schutz für Rauten-Kommentare (#...#)
+        if c == '#' and not in_string and not in_curly_comment:
+            in_hash_comment = not in_hash_comment
+            reconstructed.append(c)
+            i += 1
+            continue
+            
+        # --- ÜBERSETZUNG WENN NICHT IN STRING ODER KOMMENTAR ---
+        if not in_string and not in_curly_comment and not in_hash_comment:
+            # A. Mathematische Operatoren prüfen
+            if c in operator_back_map:
+                reconstructed.append(operator_back_map[c])
+            # B. Math-Bold Zeichen (Keywords) -> zu ASCII-GROSSBUCHSTABE
+            elif c in back_bold_map:
+                reconstructed.append(back_bold_map[c])
+            # C. Math-Italic Zeichen (Variablen) -> zu normalem ASCII
+            elif c in back_italic_map:
+                reconstructed.append(back_italic_map[c])
+            else:
+                reconstructed.append(c)
+        else:
+            # Innerhalb von Strings/Kommentaren wird alles 1:1 kopiert
+            reconstructed.append(c)
+            
+        i += 1
+        
+    # Endergebnis zusammenbauen
+    final_code = "".join(reconstructed)
+    
+    # Sicheres POSIX-Zeilenende garantieren
+    if not final_code.endswith('\n'):
+        final_code += '\n'
+        
+    return final_code
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Schritt 1: Sichere Rückkonvertierung von Unicode Stropping (.u68) zu klassischem UPPER Stropping (.a68)."
+    )
+    parser.add_argument(
+        "infile", 
+        nargs="?", 
+        type=argparse.FileType("r", encoding="utf-8"), 
+        default=sys.stdin,
+        help="Unicode Eingabedatei (.u68)."
+    )
+    parser.add_argument(
+        "-o", "--output", 
+        type=argparse.FileType("w", encoding="utf-8"), 
+        default=sys.stdout,
+        help="Ausgabedatei (.a68)."
+    )
+
+    args = parser.parse_args()
+    back_bold_map, back_italic_map, operator_back_map = build_back_maps()
+
+    try:
+        full_content = args.infile.read()
+        converted_content = convert_unicode_to_upper_strop_safe(full_content, back_bold_map, back_italic_map, operator_back_map)
+        args.output.write(converted_content)
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+if __name__ == "__main__":
+    main()
