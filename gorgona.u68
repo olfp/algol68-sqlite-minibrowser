@@ -60,6 +60,17 @@
         𝑏𝑢𝑓[1:𝑛]
       𝐞𝐧𝐝;
 
+
+
+{ Laufzeit-Logging nach stdout (fd 1): unbuffered ueber die byte-exakten
+   C-Transput-Primitive des TRANSIO-Moduls, damit jeder Eintrag auch in
+   nohup/Systemd-Logs (Github Codespace) sofort ankommt. }
+ 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐯𝐨𝐢𝐝 logmsg =
+   (𝐬𝐭𝐫𝐢𝐧𝐠 t) 𝐯𝐨𝐢𝐝:
+     𝐛𝐞𝐠𝐢𝐧
+       write_all(1, t + "'n");
+       𝐬𝐤𝐢𝐩
+     𝐞𝐧𝐝;
   { Helfer, um die Routentabelle zur Laufzeit aus dem Datenbank-Schema
     aufzubauen: das von sqlite_exec_json erzeugte JSON mit den Tabellen-
     namen wird hier bewusst einfach textuell ausgewertet. }
@@ -276,8 +287,11 @@
     (𝐫𝐞𝐟 𝐝𝐛𝐞𝐧 e) 𝐢𝐧𝐭:
       𝐛𝐞𝐠𝐢𝐧
         𝐬𝐪𝐥𝐢𝐭𝐞 h;
+        logmsg("DB: oeffne " + dbpath 𝐨𝐟 e);
         𝐢𝐧𝐭 rc ← sqlite_open(dbpath 𝐨𝐟 e, h);
+        logmsg("DB: sqlite_open rc=" + whole(rc, 0));
         𝐢𝐟 rc /= 0 𝐭𝐡𝐞𝐧
+          logmsg("DB: FEHLER beim Oeffnen, rc=" + whole(rc, 0));
           -1
         𝐞𝐥𝐬𝐞
           dbh 𝐨𝐟 e ← h;
@@ -287,6 +301,8 @@
                             + " AND name NOT LIKE " + 𝐫𝐞𝐩𝐫 39 + "sqlite_%" + 𝐫𝐞𝐩𝐫 39
                             + " ORDER BY name;";
           𝐬𝐭𝐫𝐢𝐧𝐠 tjson ← sqlite_exec_json(h, q_tables);
+          logmsg("DB: q_tables-json len=" + whole(𝐮𝐩𝐛 tjson, 0));
+          logmsg("DB: q_tables=" + tjson);
           𝐢𝐧𝐭 nt ← find_count(tjson, 𝐫𝐞𝐩𝐫 34 + "name" + 𝐫𝐞𝐩𝐫 34);
           𝐢𝐟 nt < 1 𝐭𝐡𝐞𝐧 nt ← 1 𝐟𝐢;
           𝐢𝐟 nt > maxt 𝐭𝐡𝐞𝐧 nt ← maxt 𝐟𝐢;
@@ -297,10 +313,12 @@
             { Zeilenzahl der Tabelle, damit das Frontend die Gesamtzahl
               anzeigen und einen Abruf-Grenzwert setzen kann }
             (total 𝐨𝐟 (dbrouts 𝐨𝐟 e)[i]) ← json_value(sqlite_exec_json(h,
-              "SELECT COUNT(*) FROM " + ident(tab) + ";"))
+              "SELECT COUNT(*) FROM " + ident(tab) + ";"));
+            logmsg("DB: route[" + whole(i, 0) + "] tab=" + tab + " path=" + path 𝐨𝐟 (dbrouts 𝐨𝐟 e)[i])
           𝐨𝐝;
           dbnr 𝐨𝐟 e ← nt;
           dbschema 𝐨𝐟 e ← sqlite_schema_json(h);
+          logmsg("DB: dbschema-json len=" + whole(𝐮𝐩𝐛 dbschema 𝐨𝐟 e, 0));
           0
         𝐟𝐢
       𝐞𝐧𝐝;
@@ -428,11 +446,16 @@
     "db.<name> = <pfad>"-Zeilen; gibt es keine, wird das bisherige db_path
     als eine Datenbank mit dem Basisnamen als Name genommen. port/workers
     sind optional mit Defaults. }
+  logmsg("GORGONA: Start, argc=" + whole(argc, 0));
   𝐢𝐧𝐭 config_rc ← config_load("gorgona.conf");
   𝐢𝐟 config_rc /= 0 𝐭𝐡𝐞𝐧
-    𝑝𝑢𝑡𝑠("Fehler: gorgona.conf nicht gefunden oder unlesbar (bitte im Arbeitsverzeichnis ablegen).'n");
+    logmsg("CFG: FEHLER - gorgona.conf nicht gefunden oder unlesbar, breche ab");
     posix_exit(1)
   𝐟𝐢;
+  logmsg("CFG: Datei geladen, " + whole(cfg_n, 0) + " Eintraege");
+  𝐟𝐨𝐫 k 𝐭𝐨 cfg_n 𝐝𝐨
+    logmsg("CFG: [" + whole(k, 0) + "] " + key 𝐨𝐟 cfg[k] + " = " + val 𝐨𝐟 cfg[k])
+  𝐨𝐝;
 
   𝐢𝐧𝐭 𝑝𝑜𝑟𝑡 ← config_int("port", 8080);
   𝐢𝐟 𝑎𝑟𝑔𝑐 ≥ 2 𝐭𝐡𝐞𝐧
@@ -464,8 +487,13 @@
     dbpath 𝐨𝐟 dbs[1] ← legacy_path;
     dbslug 𝐨𝐟 dbs[1] ← wsug(dbname 𝐨𝐟 dbs[1])
   𝐟𝐢;
+
+  logmsg("REG: " + whole(want, 0) + " Datenbank(en) registriert");
+  𝐟𝐨𝐫 i 𝐭𝐨 want 𝐝𝐨
+    logmsg("REG: [" + whole(i, 0) + "] name=" + dbname 𝐨𝐟 dbs[i] + " slug=" + dbslug 𝐨𝐟 dbs[i] + " path=" + dbpath 𝐨𝐟 dbs[i])
+  𝐨𝐝;
   𝐢𝐟 want < 1 𝐭𝐡𝐞𝐧
-    𝑝𝑢𝑡𝑠("Fehler: db_path fehlt in gorgona.conf.'n");
+    logmsg("REG: FEHLER - db_path/db.-Eintraege fehlen, breche ab");
     posix_exit(1)
   𝐟𝐢;
 
@@ -474,24 +502,26 @@
   𝐢𝐧𝐭 badn ← 0;
   𝐟𝐨𝐫 i 𝐭𝐨 want 𝐝𝐨
     𝐢𝐧𝐭 rc ← open_db(dbs[i]);
+    logmsg("DB: open_db(" + dbslug 𝐨𝐟 dbs[i] + ") = " + whole(rc, 0));
     𝐢𝐟 rc /= 0 𝐭𝐡𝐞𝐧
-      𝑝𝑢𝑡𝑠("Fehler: Konnte die Datenbank nicht oeffnen: " + dbpath 𝐨𝐟 dbs[i] + "'n");
+      logmsg("DB: FEHLER - nicht oeffenbar: " + dbpath 𝐨𝐟 dbs[i] + " - Abbruch");
       badn ← i
     𝐞𝐥𝐬𝐞
-      𝑝𝑢𝑡𝑠("  " + dbname 𝐨𝐟 dbs[i] + " (" + 𝑤ℎ𝑜𝑙𝑒(dbnr 𝐨𝐟 dbs[i], 0) + " Tabellen)'n")
+      logmsg("DB: ok - " + dbname 𝐨𝐟 dbs[i] + " (" + whole(dbnr 𝐨𝐟 dbs[i], 0) + " Tabellen)")
     𝐟𝐢
   𝐨𝐝;
   𝐢𝐟 badn > 0 𝐭𝐡𝐞𝐧 posix_exit(1) 𝐟𝐢;
   db_n ← want;
-  𝑝𝑢𝑡𝑠("Datenbanken: " + 𝑤ℎ𝑜𝑙𝑒(db_n, 0) + "'n");
+  logmsg("DB: insgesamt " + whole(db_n, 0) + " Datenbank(en)");
 
+  logmsg("NET: bind auf Port " + whole(port, 0));
   𝐢𝐧𝐭 listen_fd ← socket_listen(𝑝𝑜𝑟𝑡);
   𝐢𝐟 listen_fd < 0 𝐭𝐡𝐞𝐧
-    𝑝𝑢𝑡𝑠("Fehler: Konnte Port " + 𝑤ℎ𝑜𝑙𝑒(𝑝𝑜𝑟𝑡, 0) + " nicht belegen.'n");
+    logmsg("NET: FEHLER - Port " + whole(port, 0) + " nicht belegbar, breche ab");
     posix_exit(1)
   𝐟𝐢;
 
-  𝑝𝑢𝑡𝑠("Lausche auf Port " + 𝑤ℎ𝑜𝑙𝑒(𝑝𝑜𝑟𝑡, 0) + " ...'n");
+  logmsg("READY: Lausche auf Port " + whole(port, 0));
 
   { Ein Worker: liest die Request-Zeile vom Client-Descriptor, fuehrt fuer
     den Pfad die passende Abfrage gegen die zugehoerige Datenbank aus und
@@ -510,6 +540,7 @@
       𝐛𝐞𝐠𝐢𝐧
         𝐬𝐭𝐫𝐢𝐧𝐠 𝑟𝑒𝑞𝑢𝑒𝑠𝑡 ← read_line(client_fd, 4096);
         𝐬𝐭𝐫𝐢𝐧𝐠 𝑝𝑎𝑡ℎ ← extract_path(𝑟𝑒𝑞𝑢𝑒𝑠𝑡);
+        logmsg("REQ: fd=" + whole(client_fd, 0) + " " + request);
         𝐬𝐭𝐫𝐢𝐧𝐠 𝑏𝑜𝑑𝑦 ← "";
         𝐬𝐭𝐫𝐢𝐧𝐠 𝑠𝑡𝑎𝑡𝑢𝑠 ← "404 Not Found";
         𝐢𝐟 𝑝𝑎𝑡ℎ = "/" 𝐭𝐡𝐞𝐧
@@ -536,6 +567,7 @@
           𝐩𝐚𝐭𝐡𝐝𝐞𝐟 pd;
           split_db(𝑝𝑎𝑡ℎ, pd);
           𝐢𝐧𝐭 bi ← db_index(dseg 𝐨𝐟 pd);
+          logmsg("DBI: dseg=" + dseg 𝐨𝐟 pd + " -> " + whole(bi, 0));
           𝐢𝐟 bi > 0 𝐭𝐡𝐞𝐧
             𝐢𝐟 drest 𝐨𝐟 pd = "/tables" 𝐭𝐡𝐞𝐧
               { JSON-Liste aller Tabellen-Routen dieser Datenbank }
@@ -576,6 +608,7 @@
                     kann. }
                   𝐬𝐭𝐫𝐢𝐧𝐠 fcol ← pct_decode(query_string(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "fcol", ""));
                   𝐬𝐭𝐫𝐢𝐧𝐠 fval ← pct_decode(query_string(𝑟𝑒𝑞𝑢𝑒𝑠𝑡, "fval", ""));
+                  logmsg("QRY: fd=" + whole(client_fd, 0) + " offset=" + whole(offset, 0) + " count=" + whole(count, 0) + " fcol=" + fcol + " fval=" + fval);
                   𝐢𝐟 fcol = "" 𝐭𝐡𝐞𝐧
                     { Tabelle ohne Filter: Windows im rowid-Format; das
                       Frontend bekommt pro FK-Spalte zusaetzlich den
@@ -636,8 +669,12 @@
                         𝐞𝐥𝐢𝐟 𝑝𝑎𝑡ℎ = "/style.css" 𝐭𝐡𝐞𝐧 "text/css; charset=utf-8"
                         𝐞𝐥𝐬𝐞 "application/json" 𝐟𝐢,
                         𝑏𝑜𝑑𝑦);
+        logmsg("RES: fd=" + whole(client_fd, 0) + " -> " + status + " len=" + whole(𝐮𝐩𝐛 body, 0));
         write_all(client_fd, 𝑟𝑒𝑠𝑝𝑜𝑛𝑠𝑒);
-        𝑓𝑐𝑙𝑜𝑠𝑒(client_fd)
+        𝑓𝑐𝑙𝑜𝑠𝑒(client_fd);
+        𝐢𝐟 path = "/api/dbs" 𝐨𝐫 path = "/api/dbadd" 𝐭𝐡𝐞𝐧
+          logmsg("BODY: " + path + " -> " + body)
+        𝐟𝐢
       𝐞𝐧𝐝;
 
   𝐢𝐧𝐭 nr_workers ← config_int("workers", 4);

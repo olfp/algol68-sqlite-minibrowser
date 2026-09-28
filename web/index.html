@@ -16,8 +16,10 @@
     </div>
   </div>
   <p class="sub"><span id="sub">served by Gorgona</span>
+    <button id="addDbBtn" type="button" title="Neue Datenbank hinzufuegen">Add Database</button>
     <button id="erBtn" type="button" title="ER-Diagramm zeigen">ER-Diagramm</button></p>
 <div class="bar">
+    <select id="dbSel" title="Datenbank wechseln"></select>
     <select id="sel"></select>
     <input id="f" placeholder="Filtern..." autocomplete="off">
   </div>
@@ -36,6 +38,20 @@
     <form id="dlgForm"></form>
     <div class="dlgBar"><button id="dlgClose" type="button">Schließen</button></div>
     <div class="resizeGrip" id="dlgGrip"></div>
+  </div>
+</div>
+<div id="dbOverlay" hidden>
+  <div class="dlg">
+    <h2 id="dbDlgTitle">Datenbank hinzufügen</h2>
+    <form id="dbForm">
+      <label>Name</label><input id="dbName" placeholder="z. B. Chinook" autocomplete="off" spellcheck="false">
+      <label>Pfad</label><input id="dbPath" placeholder="/Pfad/zur/datenbank.sqlite" autocomplete="off" spellcheck="false">
+    </form>
+    <p class="dbHint">Die Datenbank wird geöffnet und dauerhaft in gorgona.conf eingetragen.</p>
+    <div class="dlgBar">
+      <button id="dbCancel" type="button">Abbrechen</button>
+      <button id="dbOk" type="button">Hinzufügen</button>
+    </div>
   </div>
 </div>
 <div id="er" hidden>

@@ -17,6 +17,13 @@
       sub = document.getElementById("sub"),
       overlay = document.getElementById("overlay"),
       dlgForm = document.getElementById("dlgForm"),
+      dbSel = document.getElementById("dbSel"),
+      addDbBtn = document.getElementById("addDbBtn"),
+      dbOverlay = document.getElementById("dbOverlay"),
+      dbName = document.getElementById("dbName"),
+      dbPath = document.getElementById("dbPath"),
+      dbCancel = document.getElementById("dbCancel"),
+      dbOk = document.getElementById("dbOk"),
       erBtn = document.getElementById("erBtn"),
       erClose = document.getElementById("erClose"),
       er = document.getElementById("er"),
@@ -36,7 +43,8 @@
   var widths = {};             /* Spaltenname -> Pixelbreite (per Drag) */
   var estW = {};               /* Spaltenname -> geschaetzte Mindestbreite (px) */
   var dragging = null;         /* aktiver Spalten-Resize */
-  var dbBase = "db";           /* Basisiname der aktiven Datenbank */
+  var db = "", dbLabel = "";  /* aktive Datenbank (Slug) und Anzeigename */
+  var dbs = [];                /* Liste aller Datenbanken {name,slug,path} */
   var schemaTables = [], fkByRoute = {}, currentFk = {};
   var hl = -1;                 /* absolute Zeile der FK-Navigation */
 
@@ -68,15 +76,19 @@
   function escAttr(s) {
     return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
-  /* Route aus einem Tabellennamen wie im Server (path_of): Kleinbuchstaben,
-     alles außer [a-z0-9_] wird weggelassen, davor "/api/". */
-  function toRoute(name) {
+  /* URL-Kennung wie im Server (wsug): Kleinbuchstaben, alles außer
+     [a-z0-9_] wird weggelassen ("My DB" → "mydb"). */
+  function slug(s) {
     var out = "";
-    String(name).split("").forEach(function (c) {
+    String(s).split("").forEach(function (c) {
       if (/[a-z0-9_]/.test(c)) out += c;
       else if (/[A-Z]/.test(c)) out += c.toLowerCase();
     });
-    return "/api/" + out;
+    return out;
+  }
+  /* Route aus einem Tabellennamen wie im Server: davor "/api/<db>/". */
+  function toRoute(name) {
+    return "/api/" + db + "/" + slug(name);
   }
   function td(v, num, style, bad) {
     if (v === null || v === undefined)
@@ -444,19 +456,111 @@
     overlay.hidden = true;
     dlgForm.innerHTML = "";
   }
-  function load() {
-    fetch("api/tables").then(function (r) { return r.json(); }).then(function (d) {
+  function loadTables() {
+    fetch("api/" + db + "/tables").then(function (r) { return r.json(); }).then(function (d) {
       var list = d.tables || [];
       var html = "";
       list.forEach(function (tbl) {
-        html += '<option value="' + tbl + '">' + esc(tbl.replace("/api/", "")) + "</option>";
+        html += '<option value="' + tbl + '">' + esc(tbl.replace(/^\/api\/[^/]+\//, "")) + "</option>";
       });
       sel.innerHTML = html;
       if (list.length) pick();
+      else status.textContent = "keine Tabellen in dieser Datenbank";
     }).catch(function (e) {
       status.textContent = "Fehler beim Laden der Tabellen: " + e;
       status.className = "status err";
     });
+  }
+  /* Schema einmal laden: dient dem ER-Diagramm und der FK-Navigation
+     (Route fuer Zieltabelle, "to"/"ref" je Fremdschluessel-Spalte). */
+  function buildFkMap() {
+    fkByRoute = {};
+    (schemaTables || []).forEach(function (tbl) {
+      var m = {};
+      (tbl.fks || []).forEach(function (f) { m[f.from] = { to: f.to, ref: f.ref }; });
+      if (Object.keys(m).length) fkByRoute[toRoute(tbl.name)] = m;
+    });
+  }
+  function fetchSchema() {
+    fetch("api/" + db + "/schema").then(function (r) { return r.json(); }).then(function (d) {
+      schemaTables = (d && d.tables) ? d.tables : [];
+      buildFkMap();
+      erData = schemaTables;
+      currentFk = fkByRoute[t] || {};
+      render();
+    }).catch(function () {});
+  }
+  /* Alle Datenbanken in den Switch-Pulldown eintragen. Die aktive
+     DB bleibt stehen, sonst wird die erste gewaehlt. */
+  function fillDbs(list) {
+    dbs = list || [];
+    var html = "";
+    dbs.forEach(function (d) {
+      html += '<option value="' + d.slug + '">' + esc(d.name) + "</option>";
+    });
+    dbSel.innerHTML = html;
+    var keep = db;
+    dbSel.value = keep;
+    var known = dbs.some(function (d) { return d.slug === keep; });
+    if (!keep || !known) dbSel.value = dbs.length ? dbs[0].slug : "";
+  }
+  /* Datenbank wechseln: Tabellenliste, Schema, ER und Historie
+     komplett neu aufbauen (alles gehoert zu einer Datenbank). */
+  function switchDb() {
+    var s = dbSel.value;
+    if (!s) return;
+    db = s;
+    var found = null;
+    dbs.forEach(function (d) { if (d.slug === s) found = d; });
+    dbLabel = found ? found.name : s;
+    sub.textContent = "served by Gorgona \u00b7 Datenbank " + dbLabel;
+    hist = []; hi = -1; histButtons();
+    t = ""; hl = -1;
+    rows = []; offs = []; filtered = []; cols = [];
+    tot = 0; base = 0;
+    estW = {};
+    currentFk = {};
+    schemaTables = []; fkByRoute = {}; erData = null;
+    er.hidden = true;
+    loadTables();
+    fetchSchema();
+  }
+  /* ---- Add Database: Dialog zeigen/verstecken und absenden ---- */
+  function openDbDlg() {
+    dbName.value = "";
+    dbPath.value = "";
+    status.className = "status";
+    dbOverlay.hidden = false;
+    dbName.focus();
+  }
+  function closeDbDlg() { dbOverlay.hidden = true; }
+  function addDatabase() {
+    var name = dbName.value.trim(), path = dbPath.value.trim();
+    if (!name || !path) {
+      status.textContent = "Name und Pfad werden benoetigt.";
+      status.className = "status err";
+      return;
+    }
+    status.className = "status";
+    status.textContent = "Registriere Datenbank ...";
+    fetch("api/dbadd?name=" + encodeURIComponent(name) +
+          "&path=" + encodeURIComponent(path))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) {
+          status.textContent = d.error;
+          status.className = "status err";
+          return;
+        }
+        closeDbDlg();
+        fillDbs(d.databases || []);
+        dbs.forEach(function (x) { if (x.name === name) dbSel.value = x.slug; });
+        switchDb();
+      })
+      .catch(function (e) {
+        status.textContent = "Fehler beim Hinzufuegen: " + e;
+        status.className = "status err";
+      });
   }
   sel.addEventListener("change", pick);
   backBtn.addEventListener("click", function () { histGo(-1); });
@@ -494,7 +598,17 @@
     document.addEventListener("mousemove", mv);
     document.addEventListener("mouseup", up);
   });
+  var dlTm = 0, dlX = 0, dlY = 0;
+  tbody.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    var t = Date.now();
+    if (t - dlTm < 500 && Math.abs(e.clientX - dlX) < 6 &&
+        Math.abs(e.clientY - dlY) < 6)
+      e.preventDefault();   /* zweiter Klick des Doppelklicks: keine Wortselektion */
+    dlTm = t; dlX = e.clientX; dlY = e.clientY;
+  });
   tbody.addEventListener("dblclick", function (e) {
+    e.preventDefault();
     var tr = e.target.closest("tr");
     if (!tr) return;
     var idx = Array.prototype.indexOf.call(tbody.rows, tr);
@@ -523,34 +637,31 @@
   });
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    if (!dbOverlay.hidden) { closeDbDlg(); return; }
     if (!er.hidden) er.hidden = true;
     else closeDlg();
   });
   window.addEventListener("resize", function () { measure(); render(); });
-  load();
-  fetch("api/health").then(function (r) { return r.json(); }).then(function (h) {
-    if (h && h.database) {
-      dbBase = h.database;
-      sub.textContent = "served by Gorgona \u00b7 SQLite-Datenbank " + h.database;
-    }
-  }).catch(function () {});
-  /* Schema einmal laden: dient dem ER-Diagramm und der FK-Navigation
-     (Route fuer Zieltabelle, "to"/"ref" je Fremdschluessel-Spalte). */
-  function buildFkMap() {
-    fkByRoute = {};
-    (schemaTables || []).forEach(function (tbl) {
-      var m = {};
-      (tbl.fks || []).forEach(function (f) { m[f.from] = { to: f.to, ref: f.ref }; });
-      if (Object.keys(m).length) fkByRoute[toRoute(tbl.name)] = m;
-    });
-  }
-  fetch("api/schema").then(function (r) { return r.json(); }).then(function (d) {
-    schemaTables = (d && d.tables) ? d.tables : [];
-    buildFkMap();
-    erData = schemaTables;
-    currentFk = fkByRoute[t] || {};
-    render();
-  }).catch(function () {});
+  dbSel.addEventListener("change", switchDb);
+  addDbBtn.addEventListener("click", openDbDlg);
+  dbCancel.addEventListener("click", closeDbDlg);
+  dbOk.addEventListener("click", addDatabase);
+  document.getElementById("dbForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    addDatabase();
+  });
+  dbOverlay.addEventListener("click", function (e) {
+    if (e.target === dbOverlay) closeDbDlg();
+  });
+  /* Start: erst die Datenbankliste holen, dann auf die erste (bzw. der
+     Konfiguration entsprechenden) DB umschalten. */
+  fetch("api/dbs").then(function (r) { return r.json(); }).then(function (d) {
+    fillDbs(d.databases || []);
+    switchDb();
+  }).catch(function (e) {
+    status.textContent = "Fehler beim Laden der Datenbanken: " + e;
+    status.className = "status err";
+  });
 
   /* ---- ER-Diagramm ---- */
   var SVGNS = "http://www.w3.org/2000/svg";
@@ -718,7 +829,7 @@
 
   function buildEr() {
     erEnts = {};
-    erKey = "gorgona.er." + dbBase;
+    erKey = "gorgona.er." + db;
     try {
       erPos = JSON.parse(localStorage.getItem(erKey)) || {};
     } catch (e) { erPos = {}; }
@@ -802,7 +913,7 @@
     er.hidden = false;
     if (erData) { buildEr(); return; }
     status.textContent = "Lade Schema ...";
-    fetch("api/schema").then(function (r) { return r.json(); }).then(function (d) {
+    fetch("api/" + db + "/schema").then(function (r) { return r.json(); }).then(function (d) {
       erData = (d && d.tables) ? d.tables : [];
       buildEr();
     }).catch(function (err) {

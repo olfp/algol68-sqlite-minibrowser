@@ -9,6 +9,7 @@ h1 { margin: 0; font-size: 1.4rem; }
 .sub { margin: 0 0 14px; color: #666; font-size: .9rem; }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 select, input, button { font: inherit; padding: 6px 10px; border: 1px solid #bbb; border-radius: 6px; background: #fff; }
+#dbSel { max-width: 220px; }
 input { flex: 1; min-width: 180px; }
 .status { margin: 0 0 8px; font-size: .85rem; color: #555; min-height: 1.2em; }
 .box { max-height: 68vh; overflow: auto; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
@@ -34,12 +35,15 @@ th .resizer { position: absolute; right: -4px; top: 0; bottom: 0; width: 8px; cu
 
 #overlay { position: fixed; inset: 0; background: rgba(20, 24, 30, .45); display: flex; align-items: center; justify-content: center; z-index: 10; }
 #overlay[hidden] { display: none; }
+#dbOverlay { position: fixed; inset: 0; background: rgba(20, 24, 30, .45); display: flex; align-items: center; justify-content: center; z-index: 12; }
+#dbOverlay[hidden] { display: none; }
 .dlg { position: relative; background: #fff; border-radius: 10px; max-width: 480px; width: 92%; max-height: 80vh; overflow: auto; padding: 16px 18px; box-shadow: 0 8px 30px rgba(0, 0, 0, .25); }
 .dlg h2 { margin: 0 0 12px; font-size: 1.05rem; }
 .dlg form { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
 .dlg label { font-size: .78rem; color: #666; text-transform: uppercase; letter-spacing: .03em; }
 .dlg input { font: inherit; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; background: #f7f8fa; color: #222; width: 100%; }
 .dlgBar { margin-top: 14px; text-align: right; }
+.dbHint { margin: 10px 0 0; font-size: .76rem; color: #888; }
 
 .resizeGrip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; border-bottom-right-radius: 9px; background: repeating-linear-gradient(45deg, #8a97a6 0 2px, #dfe6ee 2px 4px); opacity: .75; }
 .resizeGrip:hover { opacity: 1; }
