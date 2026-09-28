@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <unistd.h>
 
@@ -138,5 +139,49 @@ int algol68_write_all(int fd, const uint32_t *s, size_t len, size_t stride)
   }
 
   free(buf);
+  return 0;
+}
+
+/* Hostname fuer "[host ...]"-Konfig-Abschnitte: nur der erste
+ * Namensteil (= der Rechnername, ohne Domäne wie ".local"), in
+ * Kleinschreibung. Bei Fehler leerer String. */
+int algol68_hostname(uint32_t **out, size_t *out_len)
+{
+  static __thread uint32_t buf[256];
+  char h[256];
+  size_t n = 0;
+  if (gethostname(h, sizeof h) == 0) {
+    h[sizeof h - 1] = '\0';
+    for (size_t i = 0; h[i] != '\0' && h[i] != '.'; i++) {
+      char c = h[i];
+      if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+      buf[i] = (uint32_t)(unsigned char)c;
+      n = i + 1;
+    }
+  }
+  buf[n] = 0;
+  *out = buf;
+  *out_len = n;
+  return 0;
+}
+
+/* Betriebssystemname fuer "[os ...]"-Konfig-Abschnitte
+ * ("macos", "linux", "windows" oder "unknown"). */
+int algol68_osname(uint32_t **out, size_t *out_len)
+{
+  static __thread uint32_t buf[64];
+  const char *os = "unknown";
+#if defined(__APPLE__)
+  os = "macos";
+#elif defined(__linux__)
+  os = "linux";
+#elif defined(_WIN32)
+  os = "windows";
+#endif
+  size_t n = 0;
+  while (os[n] != '\0') { buf[n] = (uint32_t)(unsigned char)os[n]; n++; }
+  buf[n] = 0;
+  *out = buf;
+  *out_len = n;
   return 0;
 }

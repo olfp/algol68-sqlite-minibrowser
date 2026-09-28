@@ -35,7 +35,19 @@
   atomar ueber "<pfad>.tmp" + rename). Rueckgabe: 0 = ok, sonst < 0. }
 𝐩𝐮𝐛 𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠, 𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 write_text = 𝐧𝐞𝐬𝐭 𝐜 "algol68_write_file";
 
-{ --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare) --- }
+{ Hostname (erster Namensteil = Rechner, Kleinschreibung, ohne Domäne)
+  und Betriebssystem ("macos", "linux", "windows", "unknown"). Die
+  Konfigurationsverwaltung benutzt sie fuer Abschnitts-Eintraege
+  ([host ...] / [os ...]). }
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜 𝐬𝐭𝐫𝐢𝐧𝐠 hostname = 𝐧𝐞𝐬𝐭 𝐜 "algol68_hostname";
+𝐩𝐮𝐛 𝐩𝐫𝐨𝐜 𝐬𝐭𝐫𝐢𝐧𝐠 os_name = 𝐧𝐞𝐬𝐭 𝐜 "algol68_osname";
+
+{ --- Konfigurationsdatei (gorgona.conf: "KEY = VALUE", "#"-Kommentare).
+  Abschnitte schraenken die nachfolgenden Eintraege ein:
+    [host <hostname>]          nur auf diesem Rechner (erster Name,
+                               kleingeschrieben)
+    [os <macos|linux|...>]     nur auf diesem Betriebssystem
+  Eintraege ausserhalb eines Abschnitts gelten immer (global). --- }
 𝐩𝐮𝐛 𝐦𝐨𝐝𝐞 𝐤𝐨𝐧𝐟 = 𝐬𝐭𝐫𝐮𝐜𝐭 (𝐬𝐭𝐫𝐢𝐧𝐠 key, 𝐬𝐭𝐫𝐢𝐧𝐠 val);
 𝐩𝐮𝐛 [1:16] 𝐤𝐨𝐧𝐟 cfg;
 𝐩𝐮𝐛 𝐢𝐧𝐭 cfg_n ← 0;
@@ -77,6 +89,17 @@
         𝐢𝐧𝐭 𝑟 ← 0;
         𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑠 𝐰𝐡𝐢𝐥𝐞 𝑟 = 0 𝐝𝐨
           𝐢𝐟 𝑠[k] = "=" 𝐭𝐡𝐞𝐧 𝑟 ← k 𝐟𝐢
+        𝐨𝐝;
+        𝑟
+      𝐞𝐧𝐝;
+
+{ Position des ersten Blank-Zeichens in s; 0 wenn keins enthalten ist. }
+𝐩𝐫𝐨𝐜(𝐬𝐭𝐫𝐢𝐧𝐠) 𝐢𝐧𝐭 findblank =
+    (𝐬𝐭𝐫𝐢𝐧𝐠 𝑠) 𝐢𝐧𝐭:
+      𝐛𝐞𝐠𝐢𝐧
+        𝐢𝐧𝐭 𝑟 ← 0;
+        𝐟𝐨𝐫 k 𝐟𝐫𝐨𝐦 𝐥𝐰𝐛 𝑠 𝐭𝐨 𝐮𝐩𝐛 𝑠 𝐰𝐡𝐢𝐥𝐞 𝑟 = 0 𝐝𝐨
+          𝐢𝐟 𝑠[k] = " " 𝐭𝐡𝐞𝐧 𝑟 ← k 𝐟𝐢
         𝐨𝐝;
         𝑟
       𝐞𝐧𝐝;
@@ -132,6 +155,10 @@
           -1
         𝐞𝐥𝐬𝐞
           cfg_n ← 0;
+          { Abschnitts-Aktivitaet: Eintraege ausserhalb eines Abschnitts
+            gelten immer; innerhalb nur, wenn [host ...]/[os ...] passt.
+            Inaktive Abschnitte werden (Zeile fuer Zeile) uebersprungen. }
+          𝐛𝐨𝐨𝐥 aktiv ← 𝐭𝐫𝐮𝐞;
           𝐢𝐧𝐭 i ← 1;
           𝐰𝐡𝐢𝐥𝐞 i ≤ 𝐮𝐩𝐛 text 𝐝𝐨
             { Zeilenende suchen, Zeile ohne '\n' schneiden }
@@ -155,14 +182,30 @@
               skip ← zeile[1] = "#"
             𝐟𝐢;
             𝐢𝐟 𝐧𝐨𝐭 skip 𝐭𝐡𝐞𝐧
-              𝐢𝐧𝐭 e ← findeq(zeile);
-              𝐢𝐟 e > 0 𝐭𝐡𝐞𝐧
-                𝐬𝐭𝐫𝐢𝐧𝐠 key ← tstr(zeile[1:e-1]);
-                𝐬𝐭𝐫𝐢𝐧𝐠 val ← tstr(zeile[e+1:𝐮𝐩𝐛 zeile]);
-                𝐢𝐟 key /= "" 𝐚𝐧𝐝 cfg_n < 16 𝐭𝐡𝐞𝐧
-                  cfg_n ← cfg_n + 1;
-                  key 𝐨𝐟 cfg[cfg_n] ← key;
-                  val 𝐨𝐟 cfg[cfg_n] ← val
+              { Abschnittszeile "[tag name]": Aktivitaet umschalten und
+                nicht als "KEY = VALUE"-Eintrag behandeln }
+              𝐢𝐟 𝐮𝐩𝐛 zeile ≥ 2 𝐚𝐧𝐝 zeile[1] = "[" 𝐚𝐧𝐝 zeile[𝐮𝐩𝐛 zeile] = "]" 𝐭𝐡𝐞𝐧
+                𝐬𝐭𝐫𝐢𝐧𝐠 inhalt ← tstr(zeile[2:𝐮𝐩𝐛 zeile - 1]);
+                𝐢𝐧𝐭 b ← findblank(inhalt);
+                𝐬𝐭𝐫𝐢𝐧𝐠 tag ← inhalt, name ← "";
+                𝐢𝐟 b > 0 𝐭𝐡𝐞𝐧
+                  tag ← tstr(inhalt[1:b-1]);
+                  name ← tstr(inhalt[b+1:𝐮𝐩𝐛 inhalt])
+                𝐟𝐢;
+                𝐢𝐟 tag = "host" 𝐭𝐡𝐞𝐧 aktiv ← hostname = name
+                𝐞𝐥𝐢𝐟 tag = "os" 𝐭𝐡𝐞𝐧 aktiv ← os_name = name
+                𝐞𝐥𝐬𝐞 aktiv ← 𝐟𝐚𝐥𝐬𝐞
+                𝐟𝐢
+              𝐞𝐥𝐬𝐞
+                𝐢𝐧𝐭 e ← findeq(zeile);
+                𝐢𝐟 e > 0 𝐭𝐡𝐞𝐧
+                  𝐬𝐭𝐫𝐢𝐧𝐠 key ← tstr(zeile[1:e-1]);
+                  𝐬𝐭𝐫𝐢𝐧𝐠 val ← tstr(zeile[e+1:𝐮𝐩𝐛 zeile]);
+                  𝐢𝐟 aktiv 𝐚𝐧𝐝 key /= "" 𝐚𝐧𝐝 cfg_n < 16 𝐭𝐡𝐞𝐧
+                    cfg_n ← cfg_n + 1;
+                    key 𝐨𝐟 cfg[cfg_n] ← key;
+                    val 𝐨𝐟 cfg[cfg_n] ← val
+                  𝐟𝐢
                 𝐟𝐢
               𝐟𝐢
             𝐟𝐢

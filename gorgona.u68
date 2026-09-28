@@ -452,6 +452,7 @@
     logmsg("CFG: FEHLER - gorgona.conf nicht gefunden oder unlesbar, breche ab");
     posix_exit(1)
   𝐟𝐢;
+  logmsg("HOST: name=" + hostname + " os=" + os_name);
   logmsg("CFG: Datei geladen, " + whole(cfg_n, 0) + " Eintraege");
   𝐟𝐨𝐫 k 𝐭𝐨 cfg_n 𝐝𝐨
     logmsg("CFG: [" + whole(k, 0) + "] " + key 𝐨𝐟 cfg[k] + " = " + val 𝐨𝐟 cfg[k])
