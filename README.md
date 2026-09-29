@@ -50,6 +50,7 @@ db.Chinook = /path/to/Chinook.sqlite
 db.Northwind = /path/to/Northwind.sqlite   # one database per line
 port = 8080                                # optional, default 8080
 workers = 4                                # optional, default 4
+log = on                                   # off | on | verbose, default "on"
 ```
 
 Each `db.<name> = <path>` line registers one database under the display
@@ -63,6 +64,13 @@ old single-database key `db_path` is still accepted: if no `db.*` line
 exists, `db_path` serves as one database named after the file's
 basename. `port`/`workers` are optional with defaults, exactly as
 before.
+
+`log` selects the amount of stdout logging (default `on`): `off` silences
+everything, `on` shows the important messages (startup, host/OS, config
+summary, databases, bind errors, `READY`), `verbose` additionally shows
+the config dump, the route table, and every request/response
+(`REQ:`/`DBI:`/`QRY:`/`RES:`/`BODY:`, ideal for debugging a remote
+deployment).
 
 Then start the server:
 
